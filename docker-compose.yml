@@ -1,7 +1,7 @@
 version: "3"
 
 x-config-host: &config-host ${HOST:-0.0.0.0}
-x-config-port: &config-port ${PORT:-8080}
+x-config-port: &config-port ${PORT:-12035}
 
 services:
   nonebot:
@@ -9,9 +9,11 @@ services:
     ports:
       - *config-port
     env_file:
-      - .env.prod
+      - .env
     environment:
-      ENVIRONMENT: prod
+      ENVIRONMENT: dev
       HOST: *config-host
       PORT: *config-port
+      SQLALCHEMY_DATABASE_URL: sqlite+aiosqlite:///./data/db.sqlite3
+      ALEMBIC_STARTUP_CHECK: false
     restart: always
