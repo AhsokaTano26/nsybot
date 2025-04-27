@@ -1,4 +1,4 @@
-# nsy
+# nsybot
 
 ## How to start
 
