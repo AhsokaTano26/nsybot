@@ -23,7 +23,7 @@ sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuk
 
 # 配置项（按需修改）
 RSSHUB_HOST = "https://rsshub.app"  # RSSHub 实例地址
-TIMEOUT = 20  # 请求超时时间
+TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 API_KEY = "oW4gFumamC9b6gx2ujAKsO1I"
 SECRET_KEY = "5HB8M0ik4F2sP35iQVSp7W9fPpAH7dUA"

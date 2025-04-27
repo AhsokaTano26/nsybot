@@ -31,7 +31,7 @@ sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuk
 
 # 配置项（按需修改）
 RSSHUB_HOST = "https://rsshub.app"  # RSSHub 实例地址
-TIMEOUT = 20  # 请求超时时间
+TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
@@ -159,13 +159,13 @@ async def handle_rss(args: Message = CommandArg()):
 @scheduler.scheduled_job(CronTrigger(minute="*/10"))
 async def auto_update_func():
     await R.handle_rss("aibaaiai", 1016925587)
-    time.sleep(60)
+    time.sleep(3)
     await R.handle_rss("bang_dream_info", 1016925587)
-    time.sleep(60)
+    time.sleep(3)
     await R.handle_rss("bang_dream_info", 824993838)
-    time.sleep(60)
+    time.sleep(3)
     await R.handle_rss("kohinatamika", 824993838)
-    time.sleep(60)
+    time.sleep(3)
     await R.handle_rss("AyAsA_violin", 824993838)
-    time.sleep(60)
+    time.sleep(3)
     await R.handle_rss("aimi_sound", 824993838)
