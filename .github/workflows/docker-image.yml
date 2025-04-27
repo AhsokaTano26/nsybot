@@ -30,7 +30,7 @@ jobs:
         id: metadata
         with:
           images: |
-            AhsokaTano26/nsybot
+            {AhsokaTano26}/{nsybot}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
