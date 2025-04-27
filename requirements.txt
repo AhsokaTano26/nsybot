@@ -5,7 +5,7 @@ DateTime==5.5
 
 
 feedparser==6.0.11
-
+fastapi==0.115.0
 
 
 httpx==0.27.2
