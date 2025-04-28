@@ -26,7 +26,7 @@ B = BaiDu()  # 初始化翻译类
 R = rss_get()  # 初始化rss类
 sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuki_Nakashim","ttisrn_0710","tanda_hazuki",
           "bang_dream_info","sasakirico","Hina_Youmiya","Riko_kohara","okada_mei0519","AkaneY_banu","Kanon_Takao",
-          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847"]
+          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847","yurishiibot"]
 
 
 # 配置项（按需修改）
