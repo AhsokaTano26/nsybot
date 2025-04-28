@@ -41,6 +41,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
+          file: ./docker-compose.yml
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
