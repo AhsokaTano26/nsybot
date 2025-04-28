@@ -26,11 +26,11 @@ B = BaiDu()  # 初始化翻译类
 R = rss_get()  # 初始化rss类
 sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuki_Nakashim","ttisrn_0710","tanda_hazuki",
           "bang_dream_info","sasakirico","Hina_Youmiya","Riko_kohara","okada_mei0519","AkaneY_banu","Kanon_Takao",
-          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin"]
+          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847"]
 
 
 # 配置项（按需修改）
-RSSHUB_HOST = "https://rsshub.app"  # RSSHub 实例地址
+RSSHUB_HOST = "https://192.168.1.1:1200"  # RSSHub 实例地址
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 
@@ -169,3 +169,7 @@ async def auto_update_func():
     await R.handle_rss("AyAsA_violin", 824993838)
     time.sleep(3)
     await R.handle_rss("aimi_sound", 824993838)
+    time.sleep(3)
+    await R.handle_rss("romance847", 922940475)
+    time.sleep(3)
+    await R.handle_rss("Sae_Otsuka", 922940475)
