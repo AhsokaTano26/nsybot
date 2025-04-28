@@ -21,11 +21,11 @@ WORKDIR /app
 ENV TZ Asia/Shanghai
 ENV PYTHONPATH=/app
 ENV ALEMBIC_STARTUP_CHECK=false
-ENV ENVIRONMENT dev
-ENV SQLALCHEMY_DATABASE_URL sqlite+aiosqlite:///./data/db.sqlite3
-ENV PYTHON_VERSION 3.12.10
-ENV HOST 0.0.0.0
-ENV PORT 12035
+ENV ENVIRONMENT=dev
+ENV SQLALCHEMY_DATABASE_URL=sqlite+aiosqlite:///./data/db.sqlite3
+ENV PYTHON_VERSION=3.12.10
+ENV HOST=0.0.0.0
+ENV PORT=12035
 
 COPY ./docker/gunicorn_conf.py ./docker/start.sh /
 RUN chmod +x /start.sh
