@@ -3,7 +3,7 @@ import json
 import multiprocessing
 
 host = os.getenv("HOST", "0.0.0.0")
-port = os.getenv("PORT", "8080")
+port = os.getenv("PORT", "12035")
 bind_env = os.getenv("BIND", None)
 use_bind = bind_env or f"{host}:{port}"
 
