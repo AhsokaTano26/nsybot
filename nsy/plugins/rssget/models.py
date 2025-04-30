@@ -9,3 +9,8 @@ class Detail(Model):
     id = Column(String(255), primary_key=True, nullable=True)  #id
     summary = Column(String(255), nullable=True)  # summary
 
+class Subscribe(Model):
+    __tablename__ = "Subscribe"
+    id = Column(String(255), primary_key=True, nullable=True)
+    username = Column(String(255), nullable=True)
+    group = Column(String(255), nullable=True)

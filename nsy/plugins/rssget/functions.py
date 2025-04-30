@@ -18,7 +18,8 @@ from .models_method import DetailManger
 
 sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuki_Nakashim","ttisrn_0710","tanda_hazuki",
           "bang_dream_info","sasakirico","Hina_Youmiya","Riko_kohara","okada_mei0519","AkaneY_banu","Kanon_Takao",
-          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847"]
+          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847",
+          "yurishiibot","sakuragawa_megu"]
 
 
 # 配置项（按需修改）
@@ -120,7 +121,7 @@ class rss_get():
         """OneBot 专用图片发送方法"""
         bot = get_bot()
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=20) as client:
                 # 下载图片数据
                 resp = await client.get(img_url)
                 resp.raise_for_status()
@@ -157,15 +158,16 @@ class rss_get():
                 data = await fetch_feed(feed_url)
                 # 处理最新一条推文
                 latest = data.entries[0]
-                content = extract_content(latest)
-                trueid = content["time"] + str(group_id)
+                published = datetime(*latest.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
+                trueid = published + str(group_id)
                 try:
                     # 检查数据库中是否已存在该 Student_id 的记录
                     existing_lanmsg = await DetailManger.get_Sign_by_student_id(
                         db_session, trueid)
                     if existing_lanmsg:  # 更新记录
-                        logger.info(f"{content.get('time')}已存在")
+                        logger.info(f"{published}已存在")
                     else:
+                        content = extract_content(latest)
                         try:
                             # 写入数据库
                             await DetailManger.create_signmsg(
@@ -202,10 +204,6 @@ class rss_get():
                                 for index, img_url in enumerate(content["images"], 1):
                                     await rss_get.send_onebot_image(self, img_url, group_id)
                         except Exception as e:
-                            logger.error(f"处理签到 {content.get('time')} 时发生错误: {e}")
-
-
+                            logger.error(f"处理 {content.get('time')} 时发生错误: {e}")
                 except SQLAlchemyError as e:
                     logger.error(f"数据库操作错误: {e}")
-
-

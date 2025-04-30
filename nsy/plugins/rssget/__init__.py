@@ -7,11 +7,14 @@ from bs4 import BeautifulSoup
 from nonebot import on_command, get_bot, require, Bot
 from nonebot.adapters.onebot.v11 import MessageSegment, Message
 from nonebot.params import CommandArg
+from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.log import logger
+from nonebot_plugin_orm import get_session
+from sqlalchemy.exc import SQLAlchemyError
 
 from .functions import BaiDu, rss_get
-from .models_method import DetailManger
+from .models_method import DetailManger, SubscribeManger
 from .models import Detail
 
 
@@ -26,7 +29,8 @@ B = BaiDu()  # 初始化翻译类
 R = rss_get()  # 初始化rss类
 sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuki_Nakashim","ttisrn_0710","tanda_hazuki",
           "bang_dream_info","sasakirico","Hina_Youmiya","Riko_kohara","okada_mei0519","AkaneY_banu","Kanon_Takao",
-          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847","yurishiibot"]
+          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847",
+          "yurishiibot","sakuragawa_megu"]
 
 
 # 配置项（按需修改）
@@ -92,7 +96,7 @@ async def send_onebot_image(img_url: str):
     """OneBot 专用图片发送方法"""
     bot = get_bot()
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             # 下载图片数据
             resp = await client.get(img_url)
             resp.raise_for_status()
@@ -156,20 +160,107 @@ async def handle_rss(args: Message = CommandArg()):
                 await send_onebot_image(img_url)
 
 
+rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER)
+rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER)
+rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10, permission=SUPERUSER)
+
+@rss_sub.handle()
+async def handle_rss(args: Message = CommandArg()):
+    command = args.extract_plain_text().strip()
+    username = str(command.split(" ")[0])
+    group_id = str(command.split(" ")[1])
+    true_id = username + "-" + group_id
+    async with (get_session() as db_session):
+        try:
+            # 检查数据库中是否已存在该 Student_id 的记录
+            existing_lanmsg = await SubscribeManger.get_Sign_by_student_id(
+                db_session, true_id)
+            if existing_lanmsg:  # 更新记录
+                logger.info(f"群{group_id}对于{username}的订阅已存在")
+                await rss_sub.send(f"群{group_id}对于{username}的订阅已存在")
+            else:
+                try:
+                    # 写入数据库
+                    await SubscribeManger.create_signmsg(
+                        db_session,
+                        id=true_id,
+                        username=username,
+                        group=group_id,
+                    )
+                    await rss_sub.send(
+                        f"✅ 订阅成功\n"
+                        f"用户名: {username}\n"
+                        f"推送群组: {group_id}\n"
+                    )
+                except Exception as e:
+                    logger.error(f"创建群{group_id}对于{username}的订阅时发生错误: {e}")
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+
+@rss_unsub.handle()
+async def handle_rss(args: Message = CommandArg()):
+    command = args.extract_plain_text().strip()
+    username = str(command.split(" ")[0])
+    group_id = str(command.split(" ")[1])
+    true_id = username + "-" + group_id
+    async with (get_session() as db_session):
+        try:
+            # 检查数据库中是否已存在该 Student_id 的记录
+            existing_lanmsg = await SubscribeManger.get_Sign_by_student_id(
+                db_session, true_id)
+            if not existing_lanmsg:  # 更新记录
+                logger.info(f"群{group_id}对于{username}的订阅不存在")
+                await rss_sub.send(f"群{group_id}对于{username}的订阅不存在")
+            else:
+                try:
+                    # 写入数据库
+                    await SubscribeManger.delete_id(db_session,id=true_id)
+                    await rss_unsub.send(
+                        f"✅ 订阅取消成功\n"
+                        f"用户名: {username}\n"
+                        f"推送群组: {group_id}\n"
+                    )
+                except Exception as e:
+                    logger.error(f"取消群{group_id}对于{username}的订阅时发生错误: {e}")
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+
+@rss_list.handle()
+async def handle_rss(args: Message = CommandArg()):
+    async with (get_session() as db_session):
+        msg = "📋 当前订阅列表：\n"
+        try:
+            flag = await SubscribeManger.is_database_empty(db_session)
+            if flag:
+                await rss_list.send("当前无订阅")
+            else:
+                all = await SubscribeManger.get_all_student_id(db_session)
+                for id in all:
+                    data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                    username = data1.username
+                    group = data1.group
+                    msg += f"用户名: {username}"
+                    msg += f"推送群组: {group}\n"
+                await rss_unsub.send(msg)
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+
+
 @scheduler.scheduled_job(CronTrigger(minute="*/10"))
 async def auto_update_func():
-    await R.handle_rss("aibaaiai", 1016925587)
-    time.sleep(3)
-    await R.handle_rss("bang_dream_info", 1016925587)
-    time.sleep(3)
-    await R.handle_rss("bang_dream_info", 824993838)
-    time.sleep(3)
-    await R.handle_rss("kohinatamika", 824993838)
-    time.sleep(3)
-    await R.handle_rss("AyAsA_violin", 824993838)
-    time.sleep(3)
-    await R.handle_rss("aimi_sound", 824993838)
-    time.sleep(3)
-    await R.handle_rss("romance847", 922940475)
-    time.sleep(3)
-    await R.handle_rss("Sae_Otsuka", 922940475)
+    async with (get_session() as db_session):
+        try:
+            flag = await SubscribeManger.is_database_empty(db_session)
+            if flag:
+                await logger.info("当前无订阅")
+            else:
+                all = await SubscribeManger.get_all_student_id(db_session)
+                for id in all:
+                    data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                    username = data1.username
+                    group = int(data1.group)
+                    await R.handle_rss(username, group)
+                    time.sleep(3)
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+
