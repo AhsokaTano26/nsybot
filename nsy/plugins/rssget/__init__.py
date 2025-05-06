@@ -1,6 +1,6 @@
 import feedparser
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
@@ -14,8 +14,11 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 
 from .functions import BaiDu, rss_get
-from .models_method import DetailManger, SubscribeManger
+from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger
 from .models import Detail
+from .encrypt import encrypt
+from .update_text import update_text, get_text
+from .get_id import get_id
 
 
 __plugin_meta__ = PluginMetadata(
@@ -27,10 +30,15 @@ __plugin_meta__ = PluginMetadata(
 )
 B = BaiDu()  # 初始化翻译类
 R = rss_get()  # 初始化rss类
-sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuki_Nakashim","ttisrn_0710","tanda_hazuki",
-          "bang_dream_info","sasakirico","Hina_Youmiya","Riko_kohara","okada_mei0519","AkaneY_banu","Kanon_Takao",
-          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847",
-          "yurishiibot","sakuragawa_megu"]
+async def User_get():
+    async with (get_session() as db_session):
+        sheet1 = await UserManger.get_all_student_id(db_session)
+        return sheet1
+
+async def User_name_get(id):
+    async with (get_session() as db_session):
+        sheet1 = await UserManger.get_Sign_by_student_id(db_session,id)
+        return sheet1
 
 
 # 配置项（按需修改）
@@ -58,12 +66,17 @@ async def fetch_feed(url: str) -> dict:
 
 def extract_content(entry) -> dict:
     """提取推文内容结构化数据"""
-    published = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
+    publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
+    dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
+    # 增加指定小时
+    new_dt = dt + timedelta(hours=8)
+    # 格式化为字符串
+    published = new_dt.strftime("%Y-%m-%d %H:%M")
 
     # 清理文本内容
     clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
-    trans_text = B.main(BeautifulSoup(entry.description, "html.parser").get_text(" "))
-
+    trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("+"))
+    trans_text = trans_text1.replace("+", "\n")
     # 提取图片（优先媒体内容）
     images = []
     for media in getattr(entry, "media_content", []):
@@ -117,13 +130,16 @@ async def send_onebot_image(img_url: str):
 
 @rss_cmd.handle()
 async def handle_rss(args: Message = CommandArg()):
-    username = args.extract_plain_text().strip()
-    if not username:
+    userid = args.extract_plain_text().strip()
+    sheet1 = await User_get()
+    if not userid:
         await rss_cmd.finish("请输入Twitter用户名，例如：/rss aibaaiai")
-    elif username not in sheet1:
+    elif userid not in sheet1:
         await rss_cmd.finish("请求被否决")
     else:
-        feed_url = f"{RSSHUB_HOST}/twitter/user/{username}"
+        feed_url = f"{RSSHUB_HOST}/twitter/user/{userid}"
+        user = await User_name_get(userid)
+        username = user.User_Name
 
         # 获取数据
         data = await fetch_feed(feed_url)
@@ -135,29 +151,62 @@ async def handle_rss(args: Message = CommandArg()):
 
         # 处理最新一条推文
         latest = data.entries[0]
-        content = extract_content(latest)
+        trueid = await get_id(latest)
+        try:
+            async with (get_session() as db_session):
+                existing_lanmsg = await ContentManger.get_Sign_by_student_id(
+                    db_session, trueid)
+                if existing_lanmsg:  # 如有记录
+                    logger.info(f"该 {trueid} 推文已存在")
+                    content = await get_text(trueid)    #从本地数据库获取信息
+                    msg = [
+                        f"🐦 用户 {content["username"]} 最新动态",
+                        f"📌 {content['title']}",
+                        f"⏰ {content['time']}",
+                        f"🔗 {content['link']}",
+                        "\n📝 正文：",
+                        content['text'],
+                        f"📌 {content['trans_title']}"
+                        "\n📝 翻译：",
+                        content["trans_text"],
+                    ]
 
-        # 构建文字消息
-        msg = [
-            f"🐦 用户 {username} 最新动态",
-            f"📌 {content['title']}",
-            f"⏰ {content['time']}",
-            f"🔗 {content['link']}",
-            "\n📝 正文：",
-            content['text'],
-            f"📌 {content['trans_title']}"
-            "\n📝 翻译：",
-            content["trans_text"],
-        ]
+                    # 先发送文字内容
+                    await rss_cmd.send("\n".join(msg))
 
-        # 先发送文字内容
-        await rss_cmd.send("\n".join(msg))
+                    # 发送图片（单独处理）
+                    if int(content["image_num"]) != 0:
+                        await rss_cmd.send(f"🖼️ 检测到 {int(content['image_num'])} 张图片...")
+                        for index, img_url in enumerate(content["images"], 1):
+                            await send_onebot_image(img_url)
+                else:   #从RSSHUB获取信息
+                    content = extract_content(latest)
+                    content["username"] = username
+                    content["id"] = trueid
+                    await update_text(content)
+                    # 构建文字消息
+                    msg = [
+                        f"🐦 用户 {username} 最新动态",
+                        f"📌 {content['title']}",
+                        f"⏰ {content['time']}",
+                        f"🔗 {content['link']}",
+                        "\n📝 正文：",
+                        content['text'],
+                        f"📌 {content['trans_title']}"
+                        "\n📝 翻译：",
+                        content["trans_text"],
+                    ]
 
-        # 发送图片（单独处理）
-        if content["images"]:
-            await rss_cmd.send(f"🖼️ 检测到 {len(content['images'])} 张图片...")
-            for index, img_url in enumerate(content["images"], 1):
-                await send_onebot_image(img_url)
+                    # 先发送文字内容
+                    await rss_cmd.send("\n".join(msg))
+
+                    # 发送图片（单独处理）
+                    if content["images"]:
+                        await rss_cmd.send(f"🖼️ 检测到 {len(content['images'])} 张图片...")
+                        for index, img_url in enumerate(content["images"], 1):
+                            await send_onebot_image(img_url)
+        except Exception as e:
+            logger.error(f"数据库操作错误: {e}")
 
 
 rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER)
@@ -252,7 +301,7 @@ async def auto_update_func():
         try:
             flag = await SubscribeManger.is_database_empty(db_session)
             if flag:
-                await logger.info("当前无订阅")
+                logger.info("当前无订阅")
             else:
                 all = await SubscribeManger.get_all_student_id(db_session)
                 for id in all:
@@ -264,3 +313,86 @@ async def auto_update_func():
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
 
+
+
+
+user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, permission=SUPERUSER)
+user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, permission=SUPERUSER)
+user_list = on_command("user_list", aliases={"所有用户"}, priority=10, permission=SUPERUSER)
+@user_sub.handle()
+async def handle_rss(args: Message = CommandArg()):
+    command = args.extract_plain_text().strip()
+    user_id = str(command.split(" ")[0])
+    user_name = str(command.split(" ")[1])
+    async with (get_session() as db_session):
+        try:
+            # 检查数据库中是否已存在该 Student_id 的记录
+            existing_lanmsg = await UserManger.get_Sign_by_student_id(
+                db_session, user_id)
+            if existing_lanmsg:  # 更新记录
+                logger.info(f"用户{user_name}已在可访问列表")
+                await rss_sub.send(f"用户{user_name}已在可访问列表")
+            else:
+                try:
+                    # 写入数据库
+                    await UserManger.create_signmsg(
+                        db_session,
+                        User_ID=user_id,
+                        User_Name=user_name,
+                    )
+                    await rss_sub.send(
+                        f"✅ 增加用户成功\n"
+                        f"用户名: {user_name}\n"
+                        f"用户ID: {user_id}\n"
+                    )
+                except Exception as e:
+                    logger.error(f"创建用户{user_name}至在可访问列表时发生错误: {e}")
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+
+@user_unsub.handle()
+async def handle_rss(args: Message = CommandArg()):
+    command = args.extract_plain_text().strip()
+    user_id = str(command.split(" ")[0])
+    user_name = str(command.split(" ")[1])
+    async with (get_session() as db_session):
+        try:
+            # 检查数据库中是否已存在该 Student_id 的记录
+            existing_lanmsg = await UserManger.get_Sign_by_student_id(
+                db_session, user_id)
+            if not existing_lanmsg:  # 更新记录
+                logger.info(f"用户{user_name}不在可访问列表")
+                await rss_sub.send(f"用户{user_name}不在可访问列表")
+            else:
+                try:
+                    # 写入数据库
+                    await UserManger.delete_id(db_session,id=user_id)
+                    await rss_unsub.send(
+                        f"✅ 用户删除成功\n"
+                        f"用户名: {user_name}\n"
+                        f"用户ID: {user_id}\n"
+                    )
+                except Exception as e:
+                    logger.error(f"将用户{user_name}移出可访问列表时发生错误: {e}")
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+
+@user_list.handle()
+async def handle_rss(args: Message = CommandArg()):
+    async with (get_session() as db_session):
+        msg = "📋 当前可访问用户列表：\n"
+        try:
+            flag = await UserManger.is_database_empty(db_session)
+            if flag:
+                await rss_list.send("当前无可访问用户")
+            else:
+                all = await UserManger.get_all_student_id(db_session)
+                for id in all:
+                    data1 = await UserManger.get_Sign_by_student_id(db_session, id)
+                    username = data1.User_ID
+                    user_id = data1.User_Name
+                    msg += f"用户名: {username}"
+                    msg += f"用户ID: {user_id}\n"
+                await rss_unsub.send(msg)
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")

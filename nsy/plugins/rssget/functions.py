@@ -2,7 +2,7 @@ import requests
 import json
 import feedparser
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 from bs4 import BeautifulSoup
 from nonebot import on_command, get_bot, require, Bot
@@ -12,15 +12,22 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 
 
-from .models_method import DetailManger
+from .encrypt import encrypt
+from .models_method import DetailManger, UserManger, ContentManger
+from .get_id import get_id
+from .update_text import get_text
+from .update_text import update_text
 
 
+async def User_get():
+    async with (get_session() as db_session):
+        sheet1 = await UserManger.get_all_student_id(db_session)
+        return sheet1
 
-sheet1 = ["aibaaiai","aimi_sound","kudoharuka910","Sae_Otsuka","aoki__hina","Yuki_Nakashim","ttisrn_0710","tanda_hazuki",
-          "bang_dream_info","sasakirico","Hina_Youmiya","Riko_kohara","okada_mei0519","AkaneY_banu","Kanon_Takao",
-          "Kanon_Shizaki","bushi_creative","amane_bushi","hitaka_mashiro","kohinatamika","AyAsA_violin","romance847",
-          "yurishiibot","sakuragawa_megu"]
-
+async def User_name_get(id):
+    async with (get_session() as db_session):
+        sheet1 = await UserManger.get_Sign_by_student_id(db_session,id)
+        return sheet1
 
 # 配置项（按需修改）
 RSSHUB_HOST = "http://192.168.1.1:1200"  # RSSHub 实例地址
@@ -33,11 +40,17 @@ SECRET_KEY = "5HB8M0ik4F2sP35iQVSp7W9fPpAH7dUA"
 def extract_content(entry) -> dict:
     """提取推文内容结构化数据"""
     B = BaiDu()
-    published = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
+    publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
+    dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
+    # 增加指定小时
+    new_dt = dt + timedelta(hours=8)
+    # 格式化为字符串
+    published = new_dt.strftime("%Y-%m-%d %H:%M")
 
     # 清理文本内容
     clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
-    trans_text = B.main(BeautifulSoup(entry.description, "html.parser").get_text(" "))
+    trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("+"))
+    trans_text = trans_text1.replace("+", "\n")
 
     # 提取图片（优先媒体内容）
     images = []
@@ -148,62 +161,126 @@ class rss_get():
                 "message": f"图片下载失败：{e}"
             })
 
-    async def handle_rss(self,username: str, group_id: int):
+    async def handle_rss(self,userid: str, group_id: int):
         """处理RSS推送"""
         async with (get_session() as db_session):
+            sheet1 = await User_get()
             bot = get_bot()
-            if username in sheet1:
-                feed_url = f"{RSSHUB_HOST}/twitter/user/{username}"
+            if userid in sheet1:
+                feed_url = f"{RSSHUB_HOST}/twitter/user/{userid}"
+                user = await User_name_get(userid)
+                username = user.User_Name
                 # 获取数据
                 data = await fetch_feed(feed_url)
                 # 处理最新一条推文
                 latest = data.entries[0]
-                published = datetime(*latest.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
-                trueid = published + str(group_id)
+                trueid = await get_id(latest)
+                id_with_group = trueid + "-" + str(group_id)
                 try:
-                    # 检查数据库中是否已存在该 Student_id 的记录
-                    existing_lanmsg = await DetailManger.get_Sign_by_student_id(
+                    existing_lanmsg = await ContentManger.get_Sign_by_student_id(
                         db_session, trueid)
-                    if existing_lanmsg:  # 更新记录
-                        logger.info(f"{published}已存在")
-                    else:
-                        content = extract_content(latest)
+                    if existing_lanmsg:     #本地数据库是否有推文内容
+                        logger.info(f"该 {trueid} 推文已存在")
+                        content = await get_text(trueid)
                         try:
-                            # 写入数据库
-                            await DetailManger.create_signmsg(
-                                db_session,
-                                id=trueid,
-                                summary=content['text'],
-                            )
-                            logger.info(f"创建数据: {content.get('time')}")
-                            # 构建文字消息
-                            msg = [
-                                f"🐦 用户 {username} 最新动态",
-                                f"📌 {content['title']}",
-                                f"⏰ {content['time']}",
-                                f"🔗 {content['link']}",
-                                "\n📝 正文：",
-                                content['text'],
-                                f"📌 {content['trans_title']}"
-                                "\n📝 翻译：",
-                                content["trans_text"],
-                            ]
+                            # 检查数据库中是否已存在该 id 的记录
+                            existing_lanmsg = await DetailManger.get_Sign_by_student_id(
+                                db_session, id_with_group)
+                            if existing_lanmsg:  # 更新记录
+                                logger.info(f"{id_with_group}已存在")
+                            else:
+                                try:
+                                    # 写入数据库
+                                    await DetailManger.create_signmsg(
+                                        db_session,
+                                        id=id_with_group,
+                                        summary=content['text'],
+                                        updated=datetime.now(),
+                                    )
+                                    logger.info(f"创建数据: {content.get('time')}")
+                                    # 构建文字消息
+                                    msg = [
+                                        f"🐦 用户 {content["username"]} 最新动态",
+                                        f"📌 {content['title']}",
+                                        f"⏰ {content['time']}",
+                                        f"🔗 {content['link']}",
+                                        "\n📝 正文：",
+                                        content['text'],
+                                        f"📌 {content['trans_title']}"
+                                        "\n📝 翻译：",
+                                        content["trans_text"],
+                                    ]
 
-                            # 先发送文字内容
-                            await bot.call_api("send_group_msg", **{
-                                "group_id": group_id,
-                                "message": "\n".join(msg)
-                            })
+                                    # 先发送文字内容
+                                    await bot.call_api("send_group_msg", **{
+                                        "group_id": group_id,
+                                        "message": "\n".join(msg)
+                                    })
 
-                            # 发送图片（单独处理）
-                            if content["images"]:
-                                await bot.call_api("send_group_msg", **{
-                                    "group_id": group_id,
-                                    "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
-                                })
-                                for index, img_url in enumerate(content["images"], 1):
-                                    await rss_get.send_onebot_image(self, img_url, group_id)
-                        except Exception as e:
-                            logger.error(f"处理 {content.get('time')} 时发生错误: {e}")
-                except SQLAlchemyError as e:
-                    logger.error(f"数据库操作错误: {e}")
+                                    # 发送图片（单独处理）
+                                    if content["images"]:
+                                        await bot.call_api("send_group_msg", **{
+                                            "group_id": group_id,
+                                            "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                        })
+                                        for index, img_url in enumerate(content["images"], 1):
+                                            await rss_get.send_onebot_image(self, img_url, group_id)
+                                except Exception as e:
+                                    logger.error(f"处理 {content.get('time')} 时发生错误: {e}")
+                        except SQLAlchemyError as e:
+                            logger.error(f"数据库操作错误: {e}")
+                    else:   #本地数据库没有推文内容
+                        try:
+                            # 检查数据库中是否已存在该 id 的记录
+                            existing_lanmsg = await DetailManger.get_Sign_by_student_id(
+                                db_session, id_with_group)
+                            if existing_lanmsg:  # 更新记录
+                                logger.info(f"{id_with_group}已存在")
+                            else:
+                                content = extract_content(latest)
+                                content["username"] = username
+                                content["id"] = trueid
+                                await update_text(content)
+                                try:
+                                    # 写入数据库
+                                    await DetailManger.create_signmsg(
+                                        db_session,
+                                        id=id_with_group,
+                                        summary=content['text'],
+                                        updated=datetime.now(),
+                                    )
+                                    logger.info(f"创建数据: {content.get('time')}")
+                                    # 构建文字消息
+                                    msg = [
+                                        f"🐦 用户 {content["username"]} 最新动态",
+                                        f"📌 {content['title']}",
+                                        f"⏰ {content['time']}",
+                                        f"🔗 {content['link']}",
+                                        "\n📝 正文：",
+                                        content['text'],
+                                        f"📌 {content['trans_title']}"
+                                        "\n📝 翻译：",
+                                        content["trans_text"],
+                                    ]
+
+                                    # 先发送文字内容
+                                    await bot.call_api("send_group_msg", **{
+                                        "group_id": group_id,
+                                        "message": "\n".join(msg)
+                                    })
+
+                                    # 发送图片（单独处理）
+                                    if content["images"]:
+                                        await bot.call_api("send_group_msg", **{
+                                            "group_id": group_id,
+                                            "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                        })
+                                        for index, img_url in enumerate(content["images"], 1):
+                                            await rss_get.send_onebot_image(self, img_url, group_id)
+                                except Exception as e:
+                                    logger.error(f"处理 {content.get('time')} 时发生错误: {e}")
+                        except SQLAlchemyError as e:
+                            logger.error(f"数据库操作错误: {e}")
+
+                except Exception as e:
+                    logger.error(f"处理 {latest.get('title')} 时发生错误: {e}")
