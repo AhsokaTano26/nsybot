@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 from nonebot import logger
 
-from .encrypt import encrypt
+from .encrypt import encrypt, sha256
 
 async def get_id(entry):
     dic = {}
@@ -10,5 +10,5 @@ async def get_id(entry):
     dic["text"] = clean_text
     id = dic["title"] + "-" + dic["text"]
     trueid = await encrypt(id)
-    logger.info(f"已获取id {trueid}")
+    logger.info(f"已获取id:{trueid}")
     return trueid

@@ -5,7 +5,7 @@ import time
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
 from nonebot import on_command, get_bot, require, Bot
-from nonebot.adapters.onebot.v11 import MessageSegment, Message
+from nonebot.adapters.onebot.v11 import MessageSegment, Message, GroupMessageEvent
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
@@ -30,6 +30,15 @@ __plugin_meta__ = PluginMetadata(
 )
 B = BaiDu()  # 初始化翻译类
 R = rss_get()  # 初始化rss类
+ignored_groups = ["200214779", "210146004","524239640","925265706"]  # 替换为实际群号
+
+async def ignore_group(event: GroupMessageEvent) -> bool:
+    """检查是否在忽略的群中"""
+    a = str(event.group_id)
+    if a in ignored_groups:
+        return False
+    return True
+
 async def User_get():
     async with (get_session() as db_session):
         sheet1 = await UserManger.get_all_student_id(db_session)
@@ -48,7 +57,7 @@ MAX_IMAGES = 10  # 最多发送图片数量
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
-rss_cmd = on_command("rss",priority=10,block=True)
+rss_cmd = on_command("rss",priority=10,block=True,rule=ignore_group)
 
 
 
@@ -129,7 +138,10 @@ async def send_onebot_image(img_url: str):
 
 
 @rss_cmd.handle()
-async def handle_rss(args: Message = CommandArg()):
+async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
+    a = event.group_id
+    print(event.group_id)
+
     userid = args.extract_plain_text().strip()
     sheet1 = await User_get()
     if not userid:
@@ -191,14 +203,17 @@ async def handle_rss(args: Message = CommandArg()):
                         f"⏰ {content['time']}",
                         f"🔗 {content['link']}",
                         "\n📝 正文：",
-                        content['text'],
-                        f"📌 {content['trans_title']}"
-                        "\n📝 翻译：",
-                        content["trans_text"],
+                        content['text']
                     ]
 
+                    trans_msg = [
+                        f"📌 {content['trans_title']}"
+                        "\n📝 翻译：",
+                        content["trans_text"]
+                    ]
                     # 先发送文字内容
                     await rss_cmd.send("\n".join(msg))
+                    await rss_cmd.send("\n".join(trans_msg))
 
                     # 发送图片（单独处理）
                     if content["images"]:
@@ -295,7 +310,7 @@ async def handle_rss(args: Message = CommandArg()):
             logger.error(f"数据库操作错误: {e}")
 
 
-@scheduler.scheduled_job(CronTrigger(minute="*/10"))
+@scheduler.scheduled_job(CronTrigger(minute="*/5"))
 async def auto_update_func():
     async with (get_session() as db_session):
         try:
