@@ -155,11 +155,17 @@ class rss_get():
                 "group_id": group_id,
                 "message": f"图片下载失败：{e}"
             })
-        except Exception as e:
-            logger.error(f"图片发送失败: {str(e)}")
+        except httpx.TimeoutException as e:
+            logger.error(f"连接超时|图片下载失败: {str(e)}")
             await bot.call_api("send_group_msg", **{
                 "group_id": group_id,
-                "message": f"图片下载失败：{e}"
+                "message": f"连接超时|图片下载失败：{e}"
+            })
+        except Exception as e:
+            logger.error(f"意外错误|图片发送失败: {str(e)}")
+            await bot.call_api("send_group_msg", **{
+                "group_id": group_id,
+                "message": f"意外错误|图片下载失败：{e}"
             })
 
     async def handle_rss(self,userid: str, group_id: int):

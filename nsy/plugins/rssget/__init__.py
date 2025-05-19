@@ -132,9 +132,12 @@ async def send_onebot_image(img_url: str):
     except httpx.HTTPError as e:
         logger.error(f"图片下载失败: {str(e)}")
         await rss_cmd.send(f"图片下载失败：{e}")
+    except httpx.TimeoutException as e:
+        logger.error(f"连接超时|图片下载失败: {str(e)}")
+        await rss_cmd.send(f"连接超时|图片下载失败：{e}")
     except Exception as e:
-        logger.error(f"图片发送失败: {str(e)}")
-        await rss_cmd.send(f"图片发送失败：{e}")
+        logger.error(f"意外错误|图片发送失败: {str(e)}")
+        await rss_cmd.send(f"意外错误|图片发送失败：{e}")
 
 
 @rss_cmd.handle()
