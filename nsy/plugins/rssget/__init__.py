@@ -172,19 +172,22 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                     logger.info(f"该 {trueid} 推文已存在")
                     content = await get_text(trueid)    #从本地数据库获取信息
                     msg = [
-                        f"🐦 用户 {content["username"]} 最新动态",
+                        f"🐦 用户 {username} 最新动态",
                         f"📌 {content['title']}",
                         f"⏰ {content['time']}",
                         f"🔗 {content['link']}",
                         "\n📝 正文：",
-                        content['text'],
-                        f"📌 {content['trans_title']}"
-                        "\n📝 翻译：",
-                        content["trans_text"],
+                        content['text']
                     ]
 
+                    trans_msg = [
+                        f"📌 {content['trans_title']}"
+                        "\n📝 翻译：",
+                        content["trans_text"]
+                    ]
                     # 先发送文字内容
                     await rss_cmd.send("\n".join(msg))
+                    await rss_cmd.send("\n".join(trans_msg))
 
                     # 发送图片（单独处理）
                     if int(content["image_num"]) != 0:
