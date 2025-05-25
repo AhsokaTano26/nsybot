@@ -326,10 +326,13 @@ async def auto_update_func():
             else:
                 all = await SubscribeManger.get_all_student_id(db_session)
                 for id in all:
-                    data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                    username = data1.username
-                    group = int(data1.group)
-                    await R.handle_rss(username, group)
+                    try:
+                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                        username = data1.username
+                        group = int(data1.group)
+                        await R.handle_rss(username, group)
+                    except Exception as e:
+                        logger.error(f"群{group}对于{username}的订阅时发生错误: {e}")
                     time.sleep(3)
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
