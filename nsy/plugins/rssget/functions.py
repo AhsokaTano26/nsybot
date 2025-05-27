@@ -179,6 +179,13 @@ class rss_get():
                 username = user.User_Name
                 # 获取数据
                 data = await fetch_feed(feed_url)
+
+                if "error" in data:
+                    logger.error(data["error"])
+
+                if not data.get("entries"):
+                    logger.error("该用户暂无动态或不存在")
+
                 # 处理最新一条推文
                 latest = data.entries[0]
                 trueid = await get_id(latest)
