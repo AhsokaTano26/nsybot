@@ -316,7 +316,7 @@ async def handle_rss(args: Message = CommandArg()):
             logger.error(f"数据库操作错误: {e}")
 
 
-@scheduler.scheduled_job(CronTrigger(minute="*/5"))
+@scheduler.scheduled_job(CronTrigger(minute="*/20"))
 async def auto_update_func():
     async with (get_session() as db_session):
         try:

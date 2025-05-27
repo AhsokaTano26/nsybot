@@ -206,7 +206,7 @@ class rss_get():
                                             summary=content['text'],
                                             updated=datetime.now(),
                                         )
-                                        logger.info(f"创建数据: {content.get('time')}")
+                                        logger.info(f"创建数据: {content.get('id')}")
                                         # 构建文字消息
                                         msg = [
                                             f"🐦 用户 {content["username"]} 最新动态",
@@ -242,7 +242,7 @@ class rss_get():
                                             for index, img_url in enumerate(content["images"], 1):
                                                 await rss_get.send_onebot_image(self, img_url, group_id)
                                     except Exception as e:
-                                        logger.error(f"处理 {content.get('time')} 时发生错误: {e}")
+                                        logger.error(f"处理 {content.get('id')} 时发生错误: {e}")
                             except SQLAlchemyError as e:
                                 logger.error(f"数据库操作错误: {e}")
                         else:   #本地数据库没有推文内容
@@ -267,7 +267,7 @@ class rss_get():
                                             updated=datetime.now(),
 
                                         )
-                                        logger.info(f"创建数据: {content.get('time')}")
+                                        logger.info(f"创建数据: {content.get('id')}")
                                         # 构建文字消息
                                         msg = [
                                             f"🐦 用户 {content["username"]} 最新动态",
@@ -303,7 +303,7 @@ class rss_get():
                                             for index, img_url in enumerate(content["images"], 1):
                                                 await rss_get.send_onebot_image(self, img_url, group_id)
                                     except Exception as e:
-                                        logger.error(f"处理 {content.get('time')} 时发生错误: {e}")
+                                        logger.error(f"处理 {content.get('id')} 时发生错误: {e}")
                             except SQLAlchemyError as e:
                                 logger.error(f"数据库操作错误: {e}")
 
