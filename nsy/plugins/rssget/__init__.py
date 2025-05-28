@@ -142,8 +142,7 @@ async def send_onebot_image(img_url: str):
 
 @rss_cmd.handle()
 async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
-    a = event.group_id
-    print(event.group_id)
+    logger.info(f"从群 {event.group_id} 发起RSS_Hub请求")
 
     userid = args.extract_plain_text().strip()
     sheet1 = await User_get()

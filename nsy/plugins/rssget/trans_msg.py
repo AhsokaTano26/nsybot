@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+from nonebot.log import logger
 
 async def if_trans(entry):
     description = entry.get("description", "")
@@ -11,6 +12,17 @@ async def if_trans(entry):
 
     # 判断结果
     if quote_div:
+        logger.info("该推文为引用推文")
+        return False
+    else:
+        return True
+
+def if_self_trans(username,entry):
+    flag = "RT " + username
+    target = entry.title
+    flag = target.startswith(flag)
+    if flag:
+        logger.info("该推文为自我转发推文")
         return False
     else:
         return True

@@ -17,7 +17,7 @@ from .models_method import DetailManger, UserManger, ContentManger
 from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
-from .trans_msg import if_trans
+from .trans_msg import if_trans, if_self_trans
 
 
 async def User_get():
@@ -190,8 +190,9 @@ class rss_get():
                 latest = data.entries[0]
                 trueid = await get_id(latest)
                 id_with_group = trueid + "-" + str(group_id)
-                flag = await if_trans(latest)
-                if flag != False:
+                flag1 = await if_trans(latest)
+                flag2 = await if_self_trans(username,latest)
+                if flag1 != False and flag2 != False:
                     try:
                         existing_lanmsg = await ContentManger.get_Sign_by_student_id(
                             db_session, trueid)
@@ -203,7 +204,7 @@ class rss_get():
                                 existing_lanmsg = await DetailManger.get_Sign_by_student_id(
                                     db_session, id_with_group)
                                 if existing_lanmsg:  # 更新记录
-                                    logger.info(f"{id_with_group}已发送")
+                                    logger.info(f"{id_with_group} 已发送")
                                 else:
                                     try:
                                         # 写入数据库
@@ -317,4 +318,4 @@ class rss_get():
                     except Exception as e:
                         logger.error(f"处理 {latest.get('title')} 时发生错误: {e}")
                 else:
-                    logger.info(f"该 {trueid} 推文为转发，不发送")
+                    logger.info(f"该 {trueid} 推文为引用或转发，不发送")
