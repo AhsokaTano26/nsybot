@@ -99,7 +99,7 @@ class BaiDu():
         url = "https://aip.baidubce.com/rpc/2.0/mt/texttrans/v1?access_token=" + self.get_access_token()
 
         payload = json.dumps({
-            "from": "jp",
+            "from": "auto",
             "to": "zh",
             "q": f"{body}"
         }, ensure_ascii=False)
