@@ -17,7 +17,7 @@ async def if_trans(entry):
     else:
         return True
 
-def if_self_trans(username,entry):
+async def if_self_trans(username,entry):
     flag = "RT " + username
     target = entry.title
     flag = target.startswith(flag)
