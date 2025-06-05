@@ -231,7 +231,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
 rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER)
 rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER)
-rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10, permission=SUPERUSER)
+rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10)
 
 @rss_sub.handle()
 async def handle_rss(args: Message = CommandArg()):
@@ -315,33 +315,10 @@ async def handle_rss(args: Message = CommandArg()):
             logger.error(f"数据库操作错误: {e}")
 
 
-@scheduler.scheduled_job(CronTrigger(minute="*/20"))
-async def auto_update_func():
-    async with (get_session() as db_session):
-        try:
-            flag = await SubscribeManger.is_database_empty(db_session)
-            if flag:
-                logger.info("当前无订阅")
-            else:
-                all = await SubscribeManger.get_all_student_id(db_session)
-                for id in all:
-                    try:
-                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                        username = data1.username
-                        group = int(data1.group)
-                        await R.handle_rss(username, group)
-                    except Exception as e:
-                        logger.error(f"群{group}对于{username}的订阅时发生错误: {e}")
-                    time.sleep(3)
-        except SQLAlchemyError as e:
-            logger.error(f"数据库操作错误: {e}")
-
-
-
 
 user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, permission=SUPERUSER)
 user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, permission=SUPERUSER)
-user_list = on_command("user_list", aliases={"所有用户"}, priority=10, permission=SUPERUSER)
+user_list = on_command("user_list", aliases={"所有用户"}, priority=10)
 @user_sub.handle()
 async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
@@ -417,5 +394,37 @@ async def handle_rss(args: Message = CommandArg()):
                     msg += f"用户名: {username}"
                     msg += f"用户ID: {user_id}\n"
                 await rss_unsub.send(msg)
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+
+#定时任务，发送最新推文
+@scheduler.scheduled_job(CronTrigger(minute="*/15"))
+async def auto_update_func():
+    async with (get_session() as db_session):
+        try:
+            flag = await SubscribeManger.is_database_empty(db_session)
+            sub_list = {}
+            if flag:
+                logger.info("当前无订阅")
+            else:
+                all = await SubscribeManger.get_all_student_id(db_session)
+                for id in all:
+                    try:
+                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                        username = data1.username
+                        sub_list[username] = []
+                    except Exception as e:
+                        logger.error(f"对于{username}的订阅时发生错误: {e}")
+                for id in all:
+                    try:
+                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                        username = data1.username
+                        group = int(data1.group)
+                        sub_list.get(username).append(group)
+                    except Exception as e:
+                        logger.error(f"群{group}对于{username}的订阅时发生错误: {e}")
+                for user in sub_list:
+                    await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
+                    time.sleep(3)
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
