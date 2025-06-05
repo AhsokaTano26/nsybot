@@ -190,6 +190,7 @@ class rss_get():
                 latest = data.entries[0]
                 trueid = await get_id(latest)
                 for group_id in group_id_list:
+                    logger.info(f"正在处理 {group_id} 对 {userid} 的订阅")
                     id_with_group = trueid + "-" + str(group_id)
                     flag1 = await if_trans(latest)
                     flag2 = await if_self_trans(username,latest)
