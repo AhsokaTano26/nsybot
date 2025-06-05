@@ -230,7 +230,8 @@ class rss_get():
                                             trans_msg = [
                                                 f"📌 {content['trans_title']}"
                                                 "\n📝 翻译：",
-                                                content["trans_text"]
+                                                content["trans_text"],
+                                                "【翻译由百度文本翻译-通用版提供】"
                                             ]
 
                                             # 先发送文字内容
@@ -291,7 +292,8 @@ class rss_get():
                                             trans_msg = [
                                                 f"📌 {content['trans_title']}"
                                                 "\n📝 翻译：",
-                                                content["trans_text"]
+                                                content["trans_text"],
+                                                "【翻译由百度文本翻译-通用版提供】"
                                             ]
 
                                             # 先发送文字内容
