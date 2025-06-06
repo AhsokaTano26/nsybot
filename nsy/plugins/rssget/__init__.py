@@ -427,8 +427,11 @@ async def auto_update_func():
                         logger.error(f"群{group}对于{username}的订阅时发生错误: {e}")
                 logger.info("已获取所有群号")
                 for user in sub_list:
-                    logger.info(f"开始处理对 {user} 的订阅")
-                    await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
-                    time.sleep(3)
+                    try:
+                        logger.info(f"开始处理对 {user} 的订阅")
+                        await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
+                        time.sleep(3)
+                    except Exception as e:
+                        logger.error(f"对于{user}的订阅时发生错误: {e}")
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
