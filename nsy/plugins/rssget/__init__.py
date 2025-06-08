@@ -5,7 +5,7 @@ import time
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
 from nonebot import on_command, get_bot, require, Bot
-from nonebot.adapters.onebot.v11 import MessageSegment, Message, GroupMessageEvent
+from nonebot.adapters.onebot.v11 import MessageSegment, Message, GroupMessageEvent, GROUP_ADMIN, GROUP_OWNER
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
@@ -230,8 +230,8 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             logger.error(f"数据库操作错误: {e}")
 
 
-rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER)
-rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER)
+rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER |GROUP_ADMIN)
+rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN)
 rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10)
 
 @rss_sub.handle()
@@ -239,6 +239,9 @@ async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     username = str(command.split(" ")[0])
     group_id = str(command.split(" ")[1])
+    sheet1 = await User_get()
+    if username not in sheet1:
+        await rss_sub.finish(f"用户名 {username} 不在可访问列表中")
     true_id = username + "-" + group_id
     async with (get_session() as db_session):
         try:
@@ -309,8 +312,8 @@ async def handle_rss(args: Message = CommandArg()):
                     data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
                     username = data1.username
                     group = data1.group
-                    msg += f"用户名: {username}"
-                    msg += f"推送群组: {group}\n"
+                    msg += f"用户名: {username}\n"
+                    msg += f" 推送群组: {group}\n"
                 await rss_unsub.send(msg)
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
@@ -319,7 +322,7 @@ async def handle_rss(args: Message = CommandArg()):
 
 user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, permission=SUPERUSER)
 user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, permission=SUPERUSER)
-user_list = on_command("user_list", aliases={"所有用户"}, priority=10)
+user_list = on_command("user_list", aliases={"用户列表"}, priority=10)
 @user_sub.handle()
 async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
@@ -392,11 +395,25 @@ async def handle_rss(args: Message = CommandArg()):
                     data1 = await UserManger.get_Sign_by_student_id(db_session, id)
                     username = data1.User_ID
                     user_id = data1.User_Name
-                    msg += f"用户名: {username}"
-                    msg += f"用户ID: {user_id}\n"
+                    msg += f"用户名: {username}\n"
+                    msg += f" 用户ID: {user_id}\n"
                 await rss_unsub.send(msg)
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
+
+help = on_command("help", aliases={"/帮助"}, priority=10)
+@help.handle()
+async def handle_rss(args: Message = CommandArg()):
+    msg = "📋 nsy推文转发bot命令帮助：\n"
+    msg += "rss 用户名\n"
+    msg += "订阅列表：订阅列表\n"
+    msg += "开始订阅：订阅 用户名 推送群组\n"
+    msg += "取消订阅：取消订阅 用户名 推送群组\n"
+    msg += "增加用户：增加用户 用户ID 用户名\n"
+    msg += "删除用户：删除用户 用户ID 用户名\n"
+    msg += "用户列表：用户列表\n"
+    await help.send(msg)
+
 
 #定时任务，发送最新推文
 @scheduler.scheduled_job(CronTrigger(minute="*/15"))
