@@ -405,7 +405,7 @@ help = on_command("help", aliases={"/帮助"}, priority=10)
 @help.handle()
 async def handle_rss(args: Message = CommandArg()):
     msg = "📋 nsy推文转发bot命令帮助：\n"
-    msg += "rss 用户名\n"
+    msg += "推文查看: rss 用户名\n"
     msg += "订阅列表：订阅列表\n"
     msg += "开始订阅：订阅 用户名 推送群组\n"
     msg += "取消订阅：取消订阅 用户名 推送群组\n"

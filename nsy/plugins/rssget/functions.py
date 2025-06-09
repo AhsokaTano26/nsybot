@@ -17,7 +17,7 @@ from .models_method import DetailManger, UserManger, ContentManger
 from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
-from .trans_msg import if_trans, if_self_trans
+from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
 
 
 async def User_get():
@@ -38,7 +38,7 @@ API_KEY = "oW4gFumamC9b6gx2ujAKsO1I"
 SECRET_KEY = "5HB8M0ik4F2sP35iQVSp7W9fPpAH7dUA"
 
 
-def extract_content(entry) -> dict:
+async def extract_content(entry) -> dict:
     """提取推文内容结构化数据"""
     B = BaiDu()
     publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
@@ -49,8 +49,10 @@ def extract_content(entry) -> dict:
     published = new_dt.strftime("%Y-%m-%d %H:%M")
 
     # 清理文本内容
-    clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
-    trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("+"))
+    await if_trans(entry)
+    clean_text_old = await remove_html_tag_soup(entry.description)
+    clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
+    trans_text1 = B.main(BeautifulSoup(clean_text_old, "html.parser").get_text("+"))
     trans_text = trans_text1.replace("+", "\n")
 
     # 提取图片（优先媒体内容）
@@ -193,9 +195,8 @@ class rss_get():
                     try:
                         logger.info(f"正在处理 {group_id} 对 {userid} 的订阅")
                         id_with_group = trueid + "-" + str(group_id)
-                        flag1 = await if_trans(latest)
-                        flag2 = await if_self_trans(username,latest)
-                        if flag1 != False and flag2 != False:
+                        flag = await if_self_trans(username,latest)
+                        if flag != False:
                             try:
                                 existing_lanmsg = await ContentManger.get_Sign_by_student_id(
                                     db_session, trueid)
@@ -266,7 +267,7 @@ class rss_get():
                                         if existing_lanmsg:  # 更新记录
                                             logger.info(f"{id_with_group}已发送")
                                         else:
-                                            content = extract_content(latest)
+                                            content = await extract_content(latest)
                                             content["username"] = username
                                             content["id"] = trueid
                                             await update_text(content)
@@ -323,6 +324,6 @@ class rss_get():
                             except Exception as e:
                                 logger.error(f"处理 {latest.get('title')} 时发生错误: {e}")
                         else:
-                            logger.info(f"该 {trueid} 推文为引用或转发，不发送")
+                            logger.info(f"该 {trueid} 推文为自我转发，不发送")
                     except Exception as e:
                         logger.error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")

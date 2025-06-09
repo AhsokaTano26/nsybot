@@ -26,3 +26,23 @@ async def if_self_trans(username,entry):
         return False
     else:
         return True
+
+
+async def remove_html_tag_soup(html):
+    """
+    使用BeautifulSoup移除指定标签及其内容
+
+    参数:
+        html (str): HTML字符串
+        tag_name (str/list): 要移除的标签名或标签名列表
+
+    返回:
+        str: 清理后的HTML字符串
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # 找到所有目标标签并移除
+    for tag in soup.find_all('div', class_='rsshub-quote'):
+        tag.decompose()  # 彻底移除标签及其内容
+
+    return str(soup)
