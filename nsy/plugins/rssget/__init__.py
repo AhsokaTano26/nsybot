@@ -431,7 +431,7 @@ async def handle_rss(args: Message = CommandArg()):
     msg += "订阅列表：订阅列表\n"
     msg += "开始订阅：订阅 用户名 推送群组\n"
     msg += "取消订阅：取消订阅 用户名 推送群组\n"
-    msg += "增加用户：增加用户 用户ID 用户名\n"
+    msg += "增加用户：增加用户 用户ID 用户名 平台名\n"
     msg += "删除用户：删除用户 用户ID 用户名\n"
     msg += "用户列表：用户列表\n"
     await help.send(msg)
@@ -441,13 +441,16 @@ send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPE
 async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     msg = str(command.split(" ")[0])
+    group_list = []
     async with (get_session() as db_session):
         try:
             all = await SubscribeManger.get_all_student_id(db_session)
             bot = get_bot()
             for id in all:
-                data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                group = int(data1.group)
+                if id.group not in group_list:
+                    group_list.append(id.group)
+            for group_id in group_list:
+                group = int(group_id)
                 await bot.send_group_msg(group_id=group,message=msg)
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
