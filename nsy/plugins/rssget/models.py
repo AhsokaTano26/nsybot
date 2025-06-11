@@ -19,6 +19,13 @@ class User(Model):
     __tablename__ = "User"
     User_ID = Column(String(255), primary_key=True, nullable=True)  #id
     User_Name = Column(String(255), nullable=True)  # summary
+    Plantform = Column(String(255), nullable=True) #平台
+
+class Plantform(Model):
+    __tablename__ = "Plantform"
+    name = Column(String(255), primary_key=True, nullable=True)
+    url = Column(String(255), nullable=True)
+    need_trans = Column(String(255), nullable=True)
 
 class Content(Model):
     __tablename__ = "Content"

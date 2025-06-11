@@ -14,7 +14,7 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 
 from .functions import BaiDu, rss_get
-from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger
+from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger
 from .models import Detail
 from .encrypt import encrypt
 from .update_text import update_text, get_text
@@ -73,7 +73,7 @@ async def fetch_feed(url: str) -> dict:
         return {"error": f"获取内容失败: {str(e)}"}
 
 
-def extract_content(entry) -> dict:
+def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
     publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
@@ -84,8 +84,13 @@ def extract_content(entry) -> dict:
 
     # 清理文本内容
     clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
-    trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("+"))
-    trans_text = trans_text1.replace("+", "\n")
+    if if_need_trans == 1:
+        trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("+"))
+        trans_text = trans_text1.replace("+", "\n")
+        trans_title = B.main(entry.title)
+    else:
+        trans_text = None
+        trans_title = None
     # 提取图片（优先媒体内容）
     images = []
     for media in getattr(entry, "media_content", []):
@@ -108,7 +113,7 @@ def extract_content(entry) -> dict:
         "time": published,
         "link": entry.link,
         "text": clean_text,
-        "trans_title": B.main(entry.title),
+        "trans_title": trans_title,
         "trans_text": trans_text,
         "images": images[:MAX_IMAGES]
     }
@@ -151,83 +156,92 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     elif userid not in sheet1:
         await rss_cmd.finish("请求被否决")
     else:
-        feed_url = f"{RSSHUB_HOST}/twitter/user/{userid}"
-        user = await User_name_get(userid)
-        username = user.User_Name
+        async with (get_session() as db_session):
+            plantform = await UserManger.get_Sign_by_student_id(db_session, userid)
+            plantform = plantform.Plantform
+            plantform_name = await PlantformManger.get_Sign_by_student_id(db_session, plantform)
+            url = plantform_name.url
+            if_need_trans = int(plantform_name.need_trans)
+            feed_url = f"{RSSHUB_HOST}{url}{userid}"
+            user = await User_name_get(userid)
+            username = user.User_Name
 
-        # 获取数据
-        data = await fetch_feed(feed_url)
-        if "error" in data:
-            await rss_cmd.finish(data["error"])
+            # 获取数据
+            data = await fetch_feed(feed_url)
+            if "error" in data:
+                await rss_cmd.finish(data["error"])
 
-        if not data.get("entries"):
-            await rss_cmd.finish("该用户暂无动态或不存在")
+            if not data.get("entries"):
+                await rss_cmd.finish("该用户暂无动态或不存在")
 
-        # 处理最新一条推文
-        latest = data.entries[0]
-        trueid = await get_id(latest)
-        try:
-            async with (get_session() as db_session):
-                existing_lanmsg = await ContentManger.get_Sign_by_student_id(
-                    db_session, trueid)
-                if existing_lanmsg:  # 如有记录
-                    logger.info(f"该 {trueid} 推文已存在")
-                    content = await get_text(trueid)    #从本地数据库获取信息
-                    msg = [
-                        f"🐦 用户 {username} 最新动态",
-                        f"📌 {content['title']}",
-                        f"⏰ {content['time']}",
-                        f"🔗 {content['link']}",
-                        "\n📝 正文：",
-                        content['text']
-                    ]
+            # 处理最新一条推文
+            latest = data.entries[0]
+            trueid = await get_id(latest)
+            try:
+                async with (get_session() as db_session):
+                    existing_lanmsg = await ContentManger.get_Sign_by_student_id(
+                        db_session, trueid)
+                    if existing_lanmsg:  # 如有记录
+                        logger.info(f"该 {trueid} 推文已存在")
+                        content = await get_text(trueid)    #从本地数据库获取信息
+                        msg = [
+                            f"🐦 用户 {username} 最新动态",
+                            f"📌 {content['title']}",
+                            f"⏰ {content['time']}",
+                            f"🔗 {content['link']}",
+                            "\n📝 正文：",
+                            content['text']
+                        ]
 
-                    trans_msg = [
-                        f"📌 {content['trans_title']}"
-                        "\n📝 翻译：",
-                        content["trans_text"]
-                    ]
-                    # 先发送文字内容
-                    await rss_cmd.send("\n".join(msg))
-                    await rss_cmd.send("\n".join(trans_msg))
+                        if if_need_trans == 1:
+                            trans_msg = [
+                                f"📌 {content['trans_title']}"
+                                "\n📝 翻译：",
+                                content["trans_text"]
+                            ]
+                        # 先发送文字内容
+                        await rss_cmd.send("\n".join(msg))
+                        if if_need_trans == 1:
+                            await rss_cmd.send("\n".join(trans_msg))
 
-                    # 发送图片（单独处理）
-                    if int(content["image_num"]) != 0:
-                        await rss_cmd.send(f"🖼️ 检测到 {int(content['image_num'])} 张图片...")
-                        for index, img_url in enumerate(content["images"], 1):
-                            await send_onebot_image(img_url)
-                else:   #从RSSHUB获取信息
-                    content = extract_content(latest)
-                    content["username"] = username
-                    content["id"] = trueid
-                    await update_text(content)
-                    # 构建文字消息
-                    msg = [
-                        f"🐦 用户 {username} 最新动态",
-                        f"📌 {content['title']}",
-                        f"⏰ {content['time']}",
-                        f"🔗 {content['link']}",
-                        "\n📝 正文：",
-                        content['text']
-                    ]
+                        # 发送图片（单独处理）
+                        if int(content["image_num"]) != 0:
+                            await rss_cmd.send(f"🖼️ 检测到 {int(content['image_num'])} 张图片...")
+                            for index, img_url in enumerate(content["images"], 1):
+                                await send_onebot_image(img_url)
+                    else:   #从RSSHUB获取信息
+                        content = extract_content(latest,if_need_trans)
+                        content["username"] = username
+                        content["id"] = trueid
+                        await update_text(content)
+                        # 构建文字消息
+                        msg = [
+                            f"🐦 用户 {username} 最新动态",
+                            f"📌 {content['title']}",
+                            f"⏰ {content['time']}",
+                            f"🔗 {content['link']}",
+                            "\n📝 正文：",
+                            content['text']
+                        ]
 
-                    trans_msg = [
-                        f"📌 {content['trans_title']}"
-                        "\n📝 翻译：",
-                        content["trans_text"],
-                        "【翻译由百度文本翻译-通用版提供】"
-                    ]
-                    # 先发送文字内容
-                    await rss_cmd.send("\n".join(msg))
-                    await rss_cmd.send("\n".join(trans_msg))
+                        if if_need_trans == 1:
+                            trans_msg = [
+                                f"📌 {content['trans_title']}"
+                                "\n📝 翻译：",
+                                content["trans_text"]
+                            ]
+                        # 先发送文字内容
+                        await rss_cmd.send("\n".join(msg))
+                        if if_need_trans == 1:
+                            await rss_cmd.send("\n".join(trans_msg))
 
-                    # 发送图片（单独处理）
-                    if content["images"]:
-                        await rss_cmd.send(f"🖼️ 检测到 {len(content['images'])} 张图片...")
-                        for index, img_url in enumerate(content["images"], 1):
-                            await send_onebot_image(img_url)
-        except Exception as e:
-            logger.error(f"数据库操作错误: {e}")
+                        # 发送图片（单独处理）
+                        if content["images"]:
+                            await rss_cmd.send(f"🖼️ 检测到 {len(content['images'])} 张图片...")
+                            for index, img_url in enumerate(content["images"], 1):
+                                await send_onebot_image(img_url)
+            except Exception as e:
+                logger.error(f"数据库操作错误: {e}")
 
 
 rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER |GROUP_ADMIN)
@@ -328,8 +342,14 @@ async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     user_id = str(command.split(" ")[0])
     user_name = str(command.split(" ")[1])
+    Plantform = str(command.split(" ")[2])
     async with (get_session() as db_session):
         try:
+            Plantform_in_list = await PlantformManger.get_Sign_by_student_id(
+                db_session, Plantform)
+            if not Plantform_in_list:
+                await rss_sub.send(f"平台 {Plantform} 不存在")
+                return
             # 检查数据库中是否已存在该 Student_id 的记录
             existing_lanmsg = await UserManger.get_Sign_by_student_id(
                 db_session, user_id)
@@ -343,11 +363,13 @@ async def handle_rss(args: Message = CommandArg()):
                         db_session,
                         User_ID=user_id,
                         User_Name=user_name,
+                        Plantform=Plantform
                     )
                     await rss_sub.send(
                         f"✅ 增加用户成功\n"
                         f"用户名: {user_name}\n"
                         f"用户ID: {user_id}\n"
+                        f"平台：{Plantform}"
                     )
                 except Exception as e:
                     logger.error(f"创建用户{user_name}至在可访问列表时发生错误: {e}")
@@ -414,9 +436,26 @@ async def handle_rss(args: Message = CommandArg()):
     msg += "用户列表：用户列表\n"
     await help.send(msg)
 
+send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER)
+@send_msg.handle()
+async def handle_rss(args: Message = CommandArg()):
+    command = args.extract_plain_text().strip()
+    msg = str(command.split(" ")[0])
+    async with (get_session() as db_session):
+        try:
+            all = await SubscribeManger.get_all_student_id(db_session)
+            bot = get_bot()
+            for id in all:
+                data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                group = int(data1.group)
+                await bot.send_group_msg(group_id=group,message=msg)
+        except SQLAlchemyError as e:
+            logger.error(f"数据库操作错误: {e}")
+        except Exception as e:
+            logger.error(f"发送时发生错误: {e}")
 
 #定时任务，发送最新推文
-@scheduler.scheduled_job(CronTrigger(minute="*/15"))
+@scheduler.scheduled_job(CronTrigger(minute="*/1"))
 async def auto_update_func():
     async with (get_session() as db_session):
         try:

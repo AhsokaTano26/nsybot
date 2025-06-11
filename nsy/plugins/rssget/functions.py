@@ -13,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 
 from .encrypt import encrypt
-from .models_method import DetailManger, UserManger, ContentManger
+from .models_method import DetailManger, UserManger, ContentManger, PlantformManger
 from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
@@ -38,7 +38,7 @@ API_KEY = "oW4gFumamC9b6gx2ujAKsO1I"
 SECRET_KEY = "5HB8M0ik4F2sP35iQVSp7W9fPpAH7dUA"
 
 
-async def extract_content(entry) -> dict:
+async def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
     B = BaiDu()
     publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
@@ -52,8 +52,13 @@ async def extract_content(entry) -> dict:
     await if_trans(entry)
     clean_text_old = await remove_html_tag_soup(entry.description)
     clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
-    trans_text1 = B.main(BeautifulSoup(clean_text_old, "html.parser").get_text("+"))
-    trans_text = trans_text1.replace("+", "\n")
+    if if_need_trans == 1:
+        trans_text1 = B.main(BeautifulSoup(clean_text_old, "html.parser").get_text("+"))
+        trans_text = trans_text1.replace("+", "\n")
+        trans_title = B.main(entry.title)
+    else:
+        trans_text = None
+        trans_title = None
 
     # 提取图片（优先媒体内容）
     images = []
@@ -77,7 +82,7 @@ async def extract_content(entry) -> dict:
         "time": published,
         "link": entry.link,
         "text": clean_text,
-        "trans_title": B.main(entry.title),
+        "trans_title": trans_title,
         "trans_text": trans_text,
         "images": images[:MAX_IMAGES]
     }
@@ -176,7 +181,12 @@ class rss_get():
             sheet1 = await User_get()
             bot = get_bot()
             if userid in sheet1:
-                feed_url = f"{RSSHUB_HOST}/twitter/user/{userid}"
+                plantform = await UserManger.get_Sign_by_student_id(db_session,userid)
+                plantform = plantform.Plantform
+                plantform_name = await PlantformManger.get_Sign_by_student_id(db_session,plantform)
+                url = plantform_name.url
+                if_need_trans = int(plantform_name.need_trans)
+                feed_url = f"{RSSHUB_HOST}{url}{userid}"
                 user = await User_name_get(userid)
                 username = user.User_Name
                 # 获取数据
@@ -229,22 +239,24 @@ class rss_get():
                                                     content['text']
                                                 ]
 
-                                                trans_msg = [
-                                                    f"📌 {content['trans_title']}"
-                                                    "\n📝 翻译：",
-                                                    content["trans_text"],
-                                                    "【翻译由百度文本翻译-通用版提供】"
-                                                ]
+                                                if if_need_trans == 1:
+                                                    trans_msg = [
+                                                        f"📌 {content['trans_title']}"
+                                                        "\n📝 翻译：",
+                                                        content["trans_text"],
+                                                        "【翻译由百度文本翻译-通用版提供】"
+                                                    ]
 
                                                 # 先发送文字内容
                                                 await bot.call_api("send_group_msg", **{
                                                     "group_id": group_id,
                                                     "message": "\n".join(msg)
                                                 })
-                                                await bot.call_api("send_group_msg", **{
-                                                    "group_id": group_id,
-                                                    "message": "\n".join(trans_msg)
-                                                })
+                                                if if_need_trans == 1:
+                                                    await bot.call_api("send_group_msg", **{
+                                                        "group_id": group_id,
+                                                        "message": "\n".join(trans_msg)
+                                                    })
 
                                                 # 发送图片（单独处理）
                                                 if content["images"]:
@@ -267,7 +279,7 @@ class rss_get():
                                         if existing_lanmsg:  # 更新记录
                                             logger.info(f"{id_with_group}已发送")
                                         else:
-                                            content = await extract_content(latest)
+                                            content = await extract_content(latest,if_need_trans)
                                             content["username"] = username
                                             content["id"] = trueid
                                             await update_text(content)
@@ -291,22 +303,24 @@ class rss_get():
                                                     content['text']
                                                 ]
 
-                                                trans_msg = [
-                                                    f"📌 {content['trans_title']}"
-                                                    "\n📝 翻译：",
-                                                    content["trans_text"],
-                                                    "【翻译由百度文本翻译-通用版提供】"
-                                                ]
+                                                if if_need_trans == 1:
+                                                    trans_msg = [
+                                                        f"📌 {content['trans_title']}"
+                                                        "\n📝 翻译：",
+                                                        content["trans_text"],
+                                                        "【翻译由百度文本翻译-通用版提供】"
+                                                    ]
 
                                                 # 先发送文字内容
                                                 await bot.call_api("send_group_msg", **{
                                                     "group_id": group_id,
                                                     "message": "\n".join(msg)
                                                 })
-                                                await bot.call_api("send_group_msg", **{
-                                                    "group_id": group_id,
-                                                    "message": "\n".join(trans_msg)
-                                                })
+                                                if if_need_trans == 1:
+                                                    await bot.call_api("send_group_msg", **{
+                                                        "group_id": group_id,
+                                                        "message": "\n".join(trans_msg)
+                                                    })
 
                                                 # 发送图片（单独处理）
                                                 if content["images"]:
