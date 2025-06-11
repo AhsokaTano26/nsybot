@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import time
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
-from nonebot import on_command, get_bot, require, Bot
+from nonebot import on_command, get_bot, require, Bot, get_plugin_config
 from nonebot.adapters.onebot.v11 import MessageSegment, Message, GroupMessageEvent, GROUP_ADMIN, GROUP_OWNER
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
@@ -19,6 +19,7 @@ from .models import Detail
 from .encrypt import encrypt
 from .update_text import update_text, get_text
 from .get_id import get_id
+from .config import Config
 
 
 __plugin_meta__ = PluginMetadata(
@@ -30,12 +31,12 @@ __plugin_meta__ = PluginMetadata(
 )
 B = BaiDu()  # 初始化翻译类
 R = rss_get()  # 初始化rss类
-ignored_groups = ["200214779", "210146004","524239640","925265706"]  # 替换为实际群号
+config = get_plugin_config(Config)
 
 async def ignore_group(event: GroupMessageEvent) -> bool:
     """检查是否在忽略的群中"""
-    a = str(event.group_id)
-    if a in ignored_groups:
+    a = int(event.group_id)
+    if a in config.ignored_groups:
         return False
     return True
 
@@ -244,9 +245,9 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                 logger.error(f"数据库操作错误: {e}")
 
 
-rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER |GROUP_ADMIN)
-rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN)
-rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10)
+rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER |GROUP_ADMIN,rule=ignore_group)
+rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN,rule=ignore_group)
+rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,rule=ignore_group)
 
 @rss_sub.handle()
 async def handle_rss(args: Message = CommandArg()):
@@ -334,9 +335,9 @@ async def handle_rss(args: Message = CommandArg()):
 
 
 
-user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, permission=SUPERUSER)
-user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, permission=SUPERUSER)
-user_list = on_command("user_list", aliases={"用户列表"}, priority=10)
+user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, permission=SUPERUSER,rule=ignore_group)
+user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, permission=SUPERUSER,rule=ignore_group)
+user_list = on_command("user_list", aliases={"用户列表"}, priority=10,rule=ignore_group)
 @user_sub.handle()
 async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
@@ -423,7 +424,7 @@ async def handle_rss(args: Message = CommandArg()):
         except SQLAlchemyError as e:
             logger.error(f"数据库操作错误: {e}")
 
-help = on_command("help", aliases={"/帮助"}, priority=10)
+help = on_command("help", aliases={"/帮助"}, priority=10,rule=ignore_group)
 @help.handle()
 async def handle_rss(args: Message = CommandArg()):
     msg = "📋 nsy推文转发bot命令帮助：\n"
@@ -436,7 +437,7 @@ async def handle_rss(args: Message = CommandArg()):
     msg += "用户列表：用户列表\n"
     await help.send(msg)
 
-send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER)
+send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER,rule=ignore_group)
 @send_msg.handle()
 async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
@@ -458,7 +459,7 @@ async def handle_rss(args: Message = CommandArg()):
             logger.error(f"发送时发生错误: {e}")
 
 #定时任务，发送最新推文
-@scheduler.scheduled_job(CronTrigger(minute="*/1"))
+@scheduler.scheduled_job(CronTrigger(minute="*/15"))
 async def auto_update_func():
     async with (get_session() as db_session):
         try:
