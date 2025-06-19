@@ -478,7 +478,7 @@ async def auto_update_func():
                         sub_list[username] = []
                     except Exception as e:
                         logger.error(f"对于{username}的订阅时发生错误: {e}")
-                logger.info("已获取所有用户名")
+                logger.success("已获取所有用户名")
                 for id in all:
                     try:
                         data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
@@ -487,7 +487,7 @@ async def auto_update_func():
                         sub_list.get(username).append(group)
                     except Exception as e:
                         logger.error(f"群{group}对于{username}的订阅时发生错误: {e}")
-                logger.info("已获取所有群号")
+                logger.success("已获取所有群号")
                 for user in sub_list:
                     try:
                         logger.info(f"开始处理对 {user} 的订阅")

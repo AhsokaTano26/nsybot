@@ -158,13 +158,13 @@ class rss_get():
                 })
 
         except Exception as e:
-            logger.error(f"意外错误|图片发送失败: {str(e)}")
+            logger.error(f"意外错误|图片发送失败: {str(e)}  第 {num} 次重试")
             if num <= 3:
                 await self.send_onebot_image(img_url, group_id, num)
             else:
                 await bot.call_api("send_group_msg", **{
                     "group_id": group_id,
-                    "message": f"意外错误|图片下载失败：{e}"
+                    "message": f"意外错误|图片下载失败：{e} 已达到最大重试次数"
                 })
 
     async def handle_rss(self,userid: str, group_id_list: list):
