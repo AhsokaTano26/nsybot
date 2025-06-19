@@ -74,7 +74,7 @@ async def update_text(dic):
 
 
 
-async def get_text(id):
+async def get_text(id) -> dict[str, str]:
     async with (get_session() as db_session):
         dic = {}
         msg = await ContentManger.get_Sign_by_student_id(db_session, id)

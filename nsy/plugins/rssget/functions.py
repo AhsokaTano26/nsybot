@@ -138,9 +138,10 @@ class BaiDu():
 
 
 class rss_get():
-    async def send_onebot_image(self,img_url: str, group_id):
+    async def send_onebot_image(self,img_url: str, group_id, num):
         """OneBot 专用图片发送方法"""
         bot = get_bot()
+        num += 1
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 # 下载图片数据
@@ -156,24 +157,15 @@ class rss_get():
                     "message": image_seg
                 })
 
-        except httpx.HTTPError as e:
-            logger.error(f"图片下载失败: {str(e)}")
-            await bot.call_api("send_group_msg", **{
-                "group_id": group_id,
-                "message": f"图片下载失败：{e}"
-            })
-        except httpx.TimeoutException as e:
-            logger.error(f"连接超时|图片下载失败: {str(e)}")
-            await bot.call_api("send_group_msg", **{
-                "group_id": group_id,
-                "message": f"连接超时|图片下载失败：{e}"
-            })
         except Exception as e:
             logger.error(f"意外错误|图片发送失败: {str(e)}")
-            await bot.call_api("send_group_msg", **{
-                "group_id": group_id,
-                "message": f"意外错误|图片下载失败：{e}"
-            })
+            if num <= 3:
+                await self.send_onebot_image(img_url, group_id, num)
+            else:
+                await bot.call_api("send_group_msg", **{
+                    "group_id": group_id,
+                    "message": f"意外错误|图片下载失败：{e}"
+                })
 
     async def handle_rss(self,userid: str, group_id_list: list):
         """处理RSS推送"""
@@ -265,7 +257,7 @@ class rss_get():
                                                         "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
                                                     })
                                                     for index, img_url in enumerate(content["images"], 1):
-                                                        await rss_get.send_onebot_image(self, img_url, group_id)
+                                                        await rss_get.send_onebot_image(self, img_url, group_id,num=0)
                                             except Exception as e:
                                                 logger.error(f"处理 {content.get('id')} 时发生错误: {e}")
                                     except SQLAlchemyError as e:
@@ -329,7 +321,7 @@ class rss_get():
                                                         "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
                                                     })
                                                     for index, img_url in enumerate(content["images"], 1):
-                                                        await rss_get.send_onebot_image(self, img_url, group_id)
+                                                        await rss_get.send_onebot_image(self, img_url, group_id, num=0)
                                             except Exception as e:
                                                 logger.error(f"处理 {content.get('id')} 时发生错误: {e}")
                                     except SQLAlchemyError as e:
@@ -341,3 +333,4 @@ class rss_get():
                             logger.info(f"该 {trueid} 推文为自我转发，不发送")
                     except Exception as e:
                         logger.error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
+                    time.sleep(3)

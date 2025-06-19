@@ -1,3 +1,5 @@
+from typing import Any, Coroutine
+
 import feedparser
 import httpx
 from datetime import datetime, timedelta
@@ -40,12 +42,12 @@ async def ignore_group(event: GroupMessageEvent) -> bool:
         return False
     return True
 
-async def User_get():
+async def User_get() -> set:
     async with (get_session() as db_session):
         sheet1 = await UserManger.get_all_student_id(db_session)
         return sheet1
 
-async def User_name_get(id):
+async def User_name_get(id) -> set:
     async with (get_session() as db_session):
         sheet1 = await UserManger.get_Sign_by_student_id(db_session,id)
         return sheet1
@@ -490,7 +492,7 @@ async def auto_update_func():
                     try:
                         logger.info(f"开始处理对 {user} 的订阅")
                         await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
-                        time.sleep(3)
+                        time.sleep(5)
                     except Exception as e:
                         logger.error(f"对于{user}的订阅时发生错误: {e}")
         except SQLAlchemyError as e:
