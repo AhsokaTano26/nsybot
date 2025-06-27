@@ -463,6 +463,7 @@ async def handle_rss(args: Message = CommandArg()):
 #定时任务，发送最新推文
 @scheduler.scheduled_job(CronTrigger(minute="*/15"))
 async def auto_update_func():
+    logger.info("开始执行定时任务")
     async with (get_session() as db_session):
         try:
             flag = await SubscribeManger.is_database_empty(db_session)

@@ -37,8 +37,6 @@ TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 API_KEY = os.getenv('API_KEY')
 SECRET_KEY = os.getenv('SECRET_KEY')
-#API_KEY = "oW4gFumamC9b6gx2ujAKsO1I"
-#SECRET_KEY = "5HB8M0ik4F2sP35iQVSp7W9fPpAH7dUA"
 
 
 async def extract_content(entry,if_need_trans) -> dict:
