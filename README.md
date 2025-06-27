@@ -50,7 +50,7 @@
 # 感谢以下项目或服务
 
 不分先后
-
+* [Lanunion](https://baike.baidu.com/item/%E9%87%8D%E5%BA%86%E5%A4%A7%E5%AD%A6%E8%93%9D%E7%9B%9F/18227014)
 * [RSSHub](https://github.com/DIYgod/RSSHub)
 * [Nonebot](https://github.com/nonebot/nonebot2)
 * [百度机器翻译](https://cloud.baidu.com/doc/API/index.html)
