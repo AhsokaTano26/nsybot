@@ -33,7 +33,8 @@
 >   - 默认Rsshub地址为 *http://192.168.1.1:1200*  
 >   - 请于Docker容器的环境变量中给出 ***API_KEY*** 和 ***SECRET_KEY*** 为百度翻译API_KEY和SECRET_KEY  
 >   - 目前bot支持多平台订阅（例如：twitter、bilibili等），但需要在sqlite数据库Plantform表中手动添加  
->   - 例：![这是图片](/docs/img.png "Magic Gardens")
+>   - 例：  
+>   ![这是图片](/docs/img.png "Magic Gardens")  
 > 其中 ***name*** 为平台名，***url*** 为Rsshub路由文档所给出的前缀地址，***need_trans*** 为是否需要翻译，1为需要，0为不需要
 ### 本地部署
 >本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)  
