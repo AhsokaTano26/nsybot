@@ -10,6 +10,7 @@ from nonebot.adapters.onebot.v11 import MessageSegment, Message
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
+import os
 
 
 from .encrypt import encrypt
@@ -34,8 +35,10 @@ async def User_name_get(id):
 RSSHUB_HOST = "http://192.168.1.1:1200"  # RSSHub 实例地址
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
-API_KEY = "oW4gFumamC9b6gx2ujAKsO1I"
-SECRET_KEY = "5HB8M0ik4F2sP35iQVSp7W9fPpAH7dUA"
+API_KEY = os.getenv('API_KEY')
+SECRET_KEY = os.getenv('SECRET_KEY')
+#API_KEY = "oW4gFumamC9b6gx2ujAKsO1I"
+#SECRET_KEY = "5HB8M0ik4F2sP35iQVSp7W9fPpAH7dUA"
 
 
 async def extract_content(entry,if_need_trans) -> dict:
