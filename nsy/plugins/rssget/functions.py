@@ -192,7 +192,7 @@ class rss_get():
                     logger.error("该用户暂无动态或不存在")
 
                 # 处理最新一条推文
-                for data_number in range(0,len(data.entries)):
+                for data_number in range(0,4)):
                     logger.info(f"正在处理 {userid} 的第 {data_number} 条数据")
                     latest = data.entries[data_number]
                     trueid = await get_id(latest)
