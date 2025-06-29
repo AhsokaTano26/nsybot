@@ -449,7 +449,8 @@ async def handle_rss(args: Message = CommandArg()):
         try:
             all = await SubscribeManger.get_all_student_id(db_session)
             bot = get_bot()
-            for id in all:
+            for data in all:
+                id = await SubscribeManger.get_Sign_by_student_id(db_session, data)
                 if id.group not in group_list:
                     group_list.append(id.group)
             for group_id in group_list:
