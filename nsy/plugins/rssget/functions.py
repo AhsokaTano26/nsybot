@@ -193,7 +193,7 @@ class rss_get():
 
                 # 处理最新一条推文
                 for data_number in range(0,4):
-                    logger.info(f"正在处理 {userid} 的第 {data_number} 条数据")
+                    logger.info(f"正在处理 {userid} 的第 {data_number + 1} 条数据")
                     latest = data.entries[data_number]
                     trueid = await get_id(latest)
                     for group_id in group_id_list:
@@ -336,4 +336,4 @@ class rss_get():
                                 logger.info(f"该 {trueid} 推文为自我转发，不发送")
                         except Exception as e:
                             logger.error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
-                        time.sleep(3)
+                        time.sleep(2)
