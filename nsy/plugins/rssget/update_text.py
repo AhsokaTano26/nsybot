@@ -98,6 +98,7 @@ async def get_text(id) -> dict[str, str]:
         dic["username"] = username
         dic["image_num"] = image_num
         if int(image_num) == 0:
+            dic["images"] = None
             return dic
         else:
             images = ast.literal_eval(msg.images)
