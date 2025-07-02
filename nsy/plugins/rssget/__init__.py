@@ -14,6 +14,7 @@ from nonebot.plugin import PluginMetadata
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
+import os
 
 from .functions import BaiDu, rss_get
 from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger
@@ -36,6 +37,10 @@ R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="DEBUG",rotation="100 MB")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="100 MB")
+REFRESH_TIME = int(os.getenv('refresh_time'))
+print(REFRESH_TIME)
+
+
 async def ignore_group(event: GroupMessageEvent) -> bool:
     """检查是否在忽略的群中"""
     a = int(event.group_id)
