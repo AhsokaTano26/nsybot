@@ -29,7 +29,7 @@ __plugin_meta__ = PluginMetadata(
     name="Twitter RSS订阅",
     description="通过RSSHub获取Twitter用户最新动态并发送图片",
     usage="/rss [用户名]  # 获取指定用户最新推文",
-    type="application",
+    type="QQbot",
     homepage="https://github.com/your/repo",
 )
 B = BaiDu()  # 初始化翻译类
