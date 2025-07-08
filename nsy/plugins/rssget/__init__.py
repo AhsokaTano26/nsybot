@@ -486,8 +486,8 @@ async def handle_rss(args: Message = CommandArg()):
     msg += "增加用户：增加用户 用户ID 用户名 平台名\n"
     msg += "删除用户：删除用户 用户ID 用户名\n"
     msg += "用户列表：用户列表\n"
-    msg += "查询：查询 群组 群组ID\n"
-    msg += "查询：查询 用户 用户ID\n"
+    msg += "查询：查询 群组 群组ID \n"
+    msg += "查询：查询 用户 用户ID \n"
     await help.send(msg)
 
 send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER,rule=ignore_group)
