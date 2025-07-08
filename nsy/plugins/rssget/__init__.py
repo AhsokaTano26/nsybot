@@ -35,8 +35,8 @@ __plugin_meta__ = PluginMetadata(
 B = BaiDu()  # 初始化翻译类
 R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
-logger.add("data/log/info_log.txt", level="DEBUG",rotation="100 MB")
-logger.add("data/log/error_log.txt", level="ERROR",rotation="100 MB")
+logger.add("data/log/info_log.txt", level="DEBUG",rotation="10 MB")
+logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB")
 REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
 
 
