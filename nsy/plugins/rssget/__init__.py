@@ -37,7 +37,7 @@ R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="DEBUG",rotation="10 MB")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB")
-REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
+#REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
 
 
 async def ignore_group(event: GroupMessageEvent) -> bool:
@@ -261,6 +261,11 @@ async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     username = str(command.split(" ")[0])
     group_id = str(command.split(" ")[1])
+    try:
+        group_id = int(group_id)
+        group_id = str(group_id)
+    except:
+        await rss_sub.finish("群号格式错误")
     sheet1 = await User_get()
     if username not in sheet1:
         await rss_sub.finish(f"用户名 {username} 不在可访问列表中")
@@ -324,6 +329,7 @@ async def handle_rss(args: Message = CommandArg()):
 async def handle_rss(args: Message = CommandArg()):
     async with (get_session() as db_session):
         msg = "📋 当前订阅列表：\n"
+        sub_list = {}
         try:
             flag = await SubscribeManger.is_database_empty(db_session)
             if flag:
@@ -331,11 +337,26 @@ async def handle_rss(args: Message = CommandArg()):
             else:
                 all = await SubscribeManger.get_all_student_id(db_session)
                 for id in all:
-                    data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                    username = data1.username
-                    group = data1.group
-                    msg += f"用户名: {username}\n"
-                    msg += f" 推送群组: {group}\n"
+                    try:
+                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                        username = data1.username
+                        sub_list[username] = []
+                    except Exception as e:
+                        logger.opt(exception=True).error(f"对于{username}的订阅时发生错误: {e}")
+                logger.success("已获取所有用户名")
+                for id in all:
+                    try:
+                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                        username = data1.username
+                        group = int(data1.group)
+                        sub_list.get(username).append(group)
+                    except Exception as e:
+                        logger.opt(exception=True).error(f"群{group}对于{username}的订阅时发生错误: {e}")
+                logger.success("已获取所有群号")
+                for user in sub_list:
+                    msg += f"用户名: {user}\n"
+                    for group in sub_list[user]:
+                        msg += f"    推送群组: {group}\n"
                 await rss_unsub.send(msg)
         except SQLAlchemyError as e:
             logger.opt(exception=True).error(f"数据库操作错误: {e}")
@@ -516,7 +537,7 @@ async def handle_rss(args: Message = CommandArg()):
 
 
 #定时任务，发送最新推文
-@scheduler.scheduled_job(CronTrigger(minute=f"*/{REFRESH_TIME}"),misfire_grace_time=60)
+@scheduler.scheduled_job(CronTrigger(minute=f"*/59"),misfire_grace_time=60)
 async def auto_update_func():
     logger.info("开始执行定时任务")
     async with (get_session() as db_session):
