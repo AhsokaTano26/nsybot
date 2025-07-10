@@ -354,9 +354,13 @@ async def handle_rss(args: Message = CommandArg()):
                         logger.opt(exception=True).error(f"群{group}对于{username}的订阅时发生错误: {e}")
                 logger.success("已获取所有群号")
                 for user in sub_list:
-                    msg += f"用户名: {user}\n"
+                    user_datil = await UserManger.get_Sign_by_student_id(db_session, user)
+                    user_name = user_datil.User_Name
+                    msg += f"用户ID: {user}\n"
+                    msg += f"用户名: {user_name}\n"
                     for group in sub_list[user]:
                         msg += f"    推送群组: {group}\n"
+                    msg += "\n"
                 await rss_unsub.send(msg)
         except SQLAlchemyError as e:
             logger.opt(exception=True).error(f"数据库操作错误: {e}")
