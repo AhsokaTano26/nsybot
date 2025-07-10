@@ -37,7 +37,7 @@ R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="DEBUG",rotation="10 MB")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB")
-#REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
+REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
 
 
 async def ignore_group(event: GroupMessageEvent) -> bool:
@@ -541,7 +541,7 @@ async def handle_rss(args: Message = CommandArg()):
 
 
 #定时任务，发送最新推文
-@scheduler.scheduled_job(CronTrigger(minute=f"*/59"),misfire_grace_time=60)
+@scheduler.scheduled_job(CronTrigger(minute=f"*/{REFRESH_TIME}"),misfire_grace_time=60)
 async def auto_update_func():
     logger.info("开始执行定时任务")
     async with (get_session() as db_session):
