@@ -457,7 +457,7 @@ async def handle_rss(args: Message = CommandArg()):
             logger.opt(exception=True).error(f"数据库操作错误: {e}")
 
 
-find = on_command("查询", priority=10, permission=SUPERUSER, rule=ignore_group)
+find = on_command("查询", priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN, rule=ignore_group)
 @find.handle()
 async def handle_rss(args: Message = CommandArg()):
     async with (get_session() as db_session):
@@ -500,7 +500,7 @@ async def handle_rss(args: Message = CommandArg()):
             await find.finish("请输入正确的命令")
 
 
-help = on_command("help", aliases={"/帮助"}, priority=10,rule=ignore_group)
+help = on_command("/help", aliases={"/帮助"}, priority=10,rule=ignore_group)
 @help.handle()
 async def handle_rss(args: Message = CommandArg()):
     msg = "📋 nsy推文转发bot命令帮助：\n"
