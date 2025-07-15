@@ -361,7 +361,7 @@ async def handle_rss(args: Message = CommandArg()):
                     for group in sub_list[user]:
                         msg += f"    推送群组: {group}\n"
                     msg += "\n"
-                await rss_unsub.send(msg)
+                await rss_unsub.send(msg,end="")
         except SQLAlchemyError as e:
             logger.opt(exception=True).error(f"数据库操作错误: {e}")
 
@@ -452,7 +452,7 @@ async def handle_rss(args: Message = CommandArg()):
                     user_id = data1.User_Name
                     msg += f"用户名: {username}\n"
                     msg += f" 用户ID: {user_id}\n"
-                await rss_unsub.send(msg)
+                await rss_unsub.send(msg,end="")
         except SQLAlchemyError as e:
             logger.opt(exception=True).error(f"数据库操作错误: {e}")
 
@@ -476,7 +476,7 @@ async def handle_rss(args: Message = CommandArg()):
                         username = data1.username
                         if group_id == data1.group:
                             msg += f"{username}\n"
-                    await find.send(msg)
+                    await find.send(msg,end="")
             except SQLAlchemyError as e:
                 logger.opt(exception=True).error(f"数据库操作错误: {e}")
         elif command.startswith("用户"):
@@ -493,7 +493,7 @@ async def handle_rss(args: Message = CommandArg()):
                         group_id = data1.group
                         if user_id == data1.username:
                             msg += f"{group_id}\n"
-                    await find.send(msg)
+                    await find.send(msg,end="")
             except SQLAlchemyError as e:
                 logger.opt(exception=True).error(f"数据库操作错误: {e}")
         else:
@@ -513,7 +513,7 @@ async def handle_rss(args: Message = CommandArg()):
     msg += "用户列表：用户列表\n"
     msg += "查询：查询 群组 群组ID \n"
     msg += "查询：查询 用户 用户ID \n"
-    await help.send(msg)
+    await help.send(msg,end="")
 
 send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER,rule=ignore_group)
 @send_msg.handle()
