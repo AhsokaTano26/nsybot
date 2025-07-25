@@ -32,7 +32,7 @@ async def User_name_get(id):
         return sheet1
 
 # 配置项（按需修改）
-RSSHUB_HOST = "http://127.0.0.1:1200"  # RSSHub 实例地址
+RSSHUB_HOST = "http://192.168.1.1:1200"  # RSSHub 实例地址
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 API_KEY = os.getenv('API_KEY')
