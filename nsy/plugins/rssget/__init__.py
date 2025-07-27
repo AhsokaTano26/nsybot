@@ -573,7 +573,7 @@ async def auto_update_func():
                     try:
                         logger.info(f"开始处理对 {user} 的订阅")
                         await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
-                        time.sleep(3)
+                        time.sleep(1)
                     except Exception as e:
                         logger.opt(exception=True).error(f"对于{user}的订阅时发生错误: {e}")
         except SQLAlchemyError as e:
