@@ -63,12 +63,6 @@ async def User_name_get(id) -> set:
         return sheet1
 
 
-
-
-rss_cmd = on_command("rss",priority=10,block=True,rule=ignore_group)
-
-
-
 async def fetch_feed(url: str) -> dict:
     """异步获取并解析RSS内容"""
     try:
@@ -152,6 +146,9 @@ async def send_onebot_image(img_url: str):
         logger.opt(exception=True).error(f"意外错误|图片发送失败: {str(e)}")
         await rss_cmd.send(f"意外错误|图片发送失败：{e}")
 
+
+
+rss_cmd = on_command("rss",priority=10,block=True,rule=ignore_group)
 
 @rss_cmd.handle()
 async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
@@ -500,26 +497,75 @@ async def handle_rss(args: Message = CommandArg()):
             await find.finish("请输入正确的命令")
 
 
+list = on_command("list", aliases={"文章列表"}, priority=10,rule=ignore_group)
+@list.handle()
+async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
+    logger.info(f"从群 {event.group_id} 发起List请求")
+
+    userid = args.extract_plain_text().strip()
+    sheet1 = await User_get()
+    if not userid:
+        await rss_cmd.finish("请输入Twitter用户名，例如：list aibaaiai")
+    elif userid not in sheet1:
+        await rss_cmd.finish("请求被否决")
+    else:
+        async with (get_session() as db_session):
+            plantform = await UserManger.get_Sign_by_student_id(db_session, userid)
+            plantform = plantform.Plantform
+            plantform_name = await PlantformManger.get_Sign_by_student_id(db_session, plantform)
+            url = plantform_name.url
+            if_need_trans = int(plantform_name.need_trans)
+            feed_url = f"{RSSHUB_HOST}{url}{userid}"
+            user = await User_name_get(userid)
+            username = user.User_Name
+
+            # 获取数据
+            data = await fetch_feed(feed_url)
+            if "error" in data:
+                await rss_cmd.finish(data["error"])
+
+            if not data.get("entries"):
+                await rss_cmd.finish("该用户暂无动态或不存在")
+
+            # 处理最新一条推文
+            msg = (f"用户 {username} 的推文列表：\n")
+            num = len(data.get("entries"))
+            for i in range(0,num):
+                latest = data.get("entries")[i]
+                content = extract_content(latest, if_need_trans)
+                if content['trans_title'] != None:
+                    msg += (f"序号{i}\n"
+                            f"标题{content['title']}\n"
+                            f"标题翻译{content['trans_title']}\n")
+                else:
+                    msg += (f"序号{i}\n"
+                            f"标题{content['title']}\n")
+            await list.send(msg, end="")
+
 help = on_command("/help", aliases={"/帮助"}, priority=10,rule=ignore_group)
 @help.handle()
 async def handle_rss(args: Message = CommandArg()):
     msg = "📋 nsy推文转发bot命令帮助：\n"
-    msg += "推文查看: rss 用户名\n"
+    msg += "注：{}内的内容为发起请求时填写内容 \n"
+    msg += "推文查看(默认最新推文): rss {用户名}\n"
     msg += "订阅列表：订阅列表\n"
-    msg += "开始订阅：订阅 用户名 推送群组\n"
-    msg += "取消订阅：取消订阅 用户名 推送群组\n"
-    msg += "增加用户：增加用户 用户ID 用户名 平台名\n"
-    msg += "删除用户：删除用户 用户ID 用户名\n"
+    msg += "开始订阅：订阅 {用户名} {推送群组}\n"
+    msg += "查询用户推文列表：文章列表 {用户名}\n"
+    msg += "取消订阅：取消订阅 {用户名} {推送群组}\n"
+    msg += "增加用户：增加用户 {用户ID} {用户名} {平台名}\n"
+    msg += "删除用户：删除用户 {用户ID} {用户名}\n"
     msg += "用户列表：用户列表\n"
-    msg += "查询：查询 群组 群组ID \n"
-    msg += "查询：查询 用户 用户ID \n"
+    msg += "查询群组订阅：查询 群组 {群组ID} \n"
+    msg += "查询用户被订阅：查询 用户 {用户ID} \n"
+    msg += "本项目已开源，欢迎star\n"
+    msg += "项目地址：https://github.com/AhsokaTano26/nsybot"
     await help.send(msg,end="")
 
 send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER,rule=ignore_group)
 @send_msg.handle()
 async def handle_rss(args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
-    msg = str(command.split(" ")[0])
+    msg = str(command.split("@")[0])
     group_list = []
     async with (get_session() as db_session):
         try:
