@@ -191,7 +191,7 @@ class rss_get():
                 if not data.get("entries"):
                     logger.info("该用户暂无动态或不存在")
 
-                # 处理最新一条推文
+                # 处理最新五条推文
                 for data_number in range(0,4):
                     logger.info(f"正在处理 {userid} 的第 {data_number + 1} 条数据")
                     latest = data.entries[data_number]
@@ -336,4 +336,4 @@ class rss_get():
                                 logger.info(f"该 {trueid} 推文为自我转发，不发送")
                         except Exception as e:
                             logger.opt(exception=True).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
-                        time.sleep(0)
+                        time.sleep(0.1)

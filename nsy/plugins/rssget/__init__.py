@@ -1,5 +1,3 @@
-from typing import Any, Coroutine
-
 import feedparser
 import httpx
 from datetime import datetime, timedelta
@@ -12,6 +10,7 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.log import logger
+from nonebot.rule import to_me
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
@@ -154,7 +153,12 @@ rss_cmd = on_command("rss",priority=10,block=True,rule=ignore_group)
 async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     logger.info(f"从群 {event.group_id} 发起RSS_Hub请求")
 
-    userid = args.extract_plain_text().strip()
+    command = args.extract_plain_text().strip()
+    userid = command.split(" ")[0]
+    try:
+        num = command.split(" ")[1]
+    except:
+        num = 0
     sheet1 = await User_get()
     if not userid:
         await rss_cmd.finish("请输入Twitter用户名，例如：/rss aibaaiai")
@@ -180,7 +184,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                 await rss_cmd.finish("该用户暂无动态或不存在")
 
             # 处理最新一条推文
-            latest = data.entries[0]
+            latest = data.entries[num]
             trueid = await get_id(latest)
             try:
                 async with (get_session() as db_session):
@@ -369,6 +373,9 @@ user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, per
 user_list = on_command("user_list", aliases={"用户列表"}, priority=10,rule=ignore_group)
 @user_sub.handle()
 async def handle_rss(args: Message = CommandArg()):
+    """
+    增加可访问用户列表中用户
+    """
     command = args.extract_plain_text().strip()
     user_id = str(command.split(" ")[0])
     user_name = str(command.split(" ")[1])
@@ -408,6 +415,9 @@ async def handle_rss(args: Message = CommandArg()):
 
 @user_unsub.handle()
 async def handle_rss(args: Message = CommandArg()):
+    """
+    删除可访问用户列表中用户
+    """
     command = args.extract_plain_text().strip()
     user_id = str(command.split(" ")[0])
     user_name = str(command.split(" ")[1])
@@ -435,6 +445,9 @@ async def handle_rss(args: Message = CommandArg()):
 
 @user_list.handle()
 async def handle_rss(args: Message = CommandArg()):
+    """
+    查询当前可访问用户列表
+    """
     async with (get_session() as db_session):
         msg = "📋 当前可访问用户列表：\n"
         try:
@@ -457,6 +470,9 @@ async def handle_rss(args: Message = CommandArg()):
 find = on_command("查询", priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN, rule=ignore_group)
 @find.handle()
 async def handle_rss(args: Message = CommandArg()):
+    """
+    订阅情况查询
+    """
     async with (get_session() as db_session):
         command = args.extract_plain_text().strip()
         if command.startswith("群组"):
@@ -500,6 +516,9 @@ async def handle_rss(args: Message = CommandArg()):
 list = on_command("list", aliases={"文章列表"}, priority=10,rule=ignore_group)
 @list.handle()
 async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
+    """
+    查询用户文章列表
+    """
     logger.info(f"从群 {event.group_id} 发起List请求")
 
     userid = args.extract_plain_text().strip()
@@ -533,7 +552,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             for i in range(0,num):
                 latest = data.get("entries")[i]
                 content = extract_content(latest, if_need_trans)
-                if content['trans_title'] != None:
+                if not content['trans_title'] == None:
                     msg += (f"序号{i}\n"
                             f"标题{content['title']}\n"
                             f"标题翻译{content['trans_title']}\n")
@@ -542,12 +561,17 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             f"标题{content['title']}\n")
             await list.send(msg, end="")
 
-help = on_command("/help", aliases={"/帮助"}, priority=10,rule=ignore_group)
+help = on_command("/help", aliases={"/帮助"}, priority=10,rule=ignore_group & to_me())
 @help.handle()
-async def handle_rss(args: Message = CommandArg()):
+async def handle_rss(event: GroupMessageEvent):
+    """
+    bot帮助
+    """
+    bot = get_bot()
+    group_id = event.group_id
     msg = "📋 nsy推文转发bot命令帮助：\n"
     msg += "注：{}内的内容为发起请求时填写内容 \n"
-    msg += "推文查看(默认最新推文): rss {用户名}\n"
+    msg += "推文查看: rss {用户名} {文章序列号(不填默认为0，即最新文章)}\n"
     msg += "订阅列表：订阅列表\n"
     msg += "开始订阅：订阅 {用户名} {推送群组}\n"
     msg += "查询用户推文列表：文章列表 {用户名}\n"
@@ -559,11 +583,24 @@ async def handle_rss(args: Message = CommandArg()):
     msg += "查询用户被订阅：查询 用户 {用户ID} \n"
     msg += "本项目已开源，欢迎star\n"
     msg += "项目地址：https://github.com/AhsokaTano26/nsybot"
-    await help.send(msg,end="")
+
+    try:
+        with open('../../../docs/help.png', 'rb') as image_file:
+            img = image_file.read()
+        image_seg = MessageSegment.image(img)
+        await bot.call_api("send_group_msg", **{
+                    "group_id": group_id,
+                    "message": image_seg
+                })
+    except:
+        await help.send(msg,end="")
 
 send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER,rule=ignore_group)
 @send_msg.handle()
 async def handle_rss(args: Message = CommandArg()):
+    """
+    向所有订阅群组发送通知
+    """
     command = args.extract_plain_text().strip()
     msg = str(command.split("@")[0])
     group_list = []
@@ -589,6 +626,9 @@ async def handle_rss(args: Message = CommandArg()):
 #定时任务，发送最新推文
 @scheduler.scheduled_job(CronTrigger(minute=f"*/{REFRESH_TIME}"),misfire_grace_time=60)
 async def auto_update_func():
+    """
+    定时向订阅群组发送推文
+    """
     logger.info("开始执行定时任务")
     async with (get_session() as db_session):
         try:
