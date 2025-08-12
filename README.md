@@ -57,6 +57,5 @@
 * [RSSHub](https://github.com/DIYgod/RSSHub)
 * [Nonebot](https://github.com/nonebot/nonebot2)
 * [百度机器翻译](https://cloud.baidu.com/doc/API/index.html)
-* [go-cqhttp](https://github.com/Mrs4s/go-cqhttp)
 * [Napcat](https://napneko.github.io/guide/napcat)
 * [onebotv11](https://283375.github.io/onebot_v11_vitepress/)

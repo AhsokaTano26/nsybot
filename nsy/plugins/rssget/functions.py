@@ -97,7 +97,7 @@ async def fetch_feed(url: str) -> dict:
             resp.raise_for_status()
             return feedparser.parse(resp.content)
     except Exception as e:
-        logger.opt(exception=True).error(f"RSS请求失败: {str(e)}")
+        logger.opt(exception=False).error(f"RSS请求失败: {str(e)}")
         return {"error": f"获取内容失败: {str(e)}"}
 
 
@@ -159,7 +159,7 @@ class rss_get():
                 })
 
         except Exception as e:
-            logger.opt(exception=True).error(f"意外错误|图片发送失败: {str(e)}  第 {num} 次重试")
+            logger.opt(exception=False).error(f"意外错误|图片发送失败: {str(e)}  第 {num} 次重试")
             if num <= 3:
                 await self.send_onebot_image(img_url, group_id, num)
             else:
@@ -186,7 +186,7 @@ class rss_get():
                 data = await fetch_feed(feed_url)
 
                 if "error" in data:
-                    logger.opt(exception=True).error(data["error"])
+                    logger.opt(exception=False).error(data["error"])
 
                 if not data.get("entries"):
                     logger.info("该用户暂无动态或不存在")
@@ -262,9 +262,9 @@ class rss_get():
                                                         for index, img_url in enumerate(content["images"], 1):
                                                             await rss_get.send_onebot_image(self, img_url, group_id,num=0)
                                                 except Exception as e:
-                                                    logger.opt(exception=True).error(f"处理 {content.get('id')} 时发生错误: {e}")
+                                                    logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
                                         except SQLAlchemyError as e:
-                                            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+                                            logger.opt(exception=False).error(f"数据库操作错误: {e}")
                                     else:   #本地数据库没有推文内容
                                         logger.info(f"该 {trueid} 推文本地不存在")
                                         try:
@@ -326,14 +326,14 @@ class rss_get():
                                                         for index, img_url in enumerate(content["images"], 1):
                                                             await rss_get.send_onebot_image(self, img_url, group_id, num=0)
                                                 except Exception as e:
-                                                    logger.opt(exception=True).error(f"处理 {content.get('id')} 时发生错误: {e}")
+                                                    logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
                                         except SQLAlchemyError as e:
-                                            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+                                            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
                                 except Exception as e:
-                                    logger.opt(exception=True).error(f"处理 {latest.get('title')} 时发生错误: {e}")
+                                    logger.opt(exception=False).error(f"处理 {latest.get('title')} 时发生错误: {e}")
                             else:
                                 logger.info(f"该 {trueid} 推文为自我转发，不发送")
                         except Exception as e:
-                            logger.opt(exception=True).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
+                            logger.opt(exception=False).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
                         time.sleep(0.1)

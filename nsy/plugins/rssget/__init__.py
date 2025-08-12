@@ -70,7 +70,7 @@ async def fetch_feed(url: str) -> dict:
             resp.raise_for_status()
             return feedparser.parse(resp.content)
     except Exception as e:
-        logger.opt(exception=True).error(f"RSS请求失败: {str(e)}")
+        logger.opt(exception=False).error(f"RSS请求失败: {str(e)}")
         return {"error": f"获取内容失败: {str(e)}"}
 
 
@@ -136,13 +136,13 @@ async def send_onebot_image(img_url: str):
             await rss_cmd.send(image_seg)
 
     except httpx.HTTPError as e:
-        logger.opt(exception=True).error(f"图片下载失败: {str(e)}")
+        logger.opt(exception=False).error(f"图片下载失败: {str(e)}")
         await rss_cmd.send(f"图片下载失败：{e}")
     except httpx.TimeoutException as e:
-        logger.opt(exception=True).error(f"连接超时|图片下载失败: {str(e)}")
+        logger.opt(exception=False).error(f"连接超时|图片下载失败: {str(e)}")
         await rss_cmd.send(f"连接超时|图片下载失败：{e}")
     except Exception as e:
-        logger.opt(exception=True).error(f"意外错误|图片发送失败: {str(e)}")
+        logger.opt(exception=False).error(f"意外错误|图片发送失败: {str(e)}")
         await rss_cmd.send(f"意外错误|图片发送失败：{e}")
 
 
@@ -250,7 +250,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             for index, img_url in enumerate(content["images"], 1):
                                 await send_onebot_image(img_url)
             except Exception as e:
-                logger.opt(exception=True).error(f"数据库操作错误: {e}")
+                logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
 rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER |GROUP_ADMIN,rule=ignore_group)
@@ -294,9 +294,9 @@ async def handle_rss(args: Message = CommandArg()):
                         f"推送群组: {group_id}\n"
                     )
                 except Exception as e:
-                    logger.opt(exception=True).error(f"创建群{group_id}对于{username}的订阅时发生错误: {e}")
+                    logger.opt(exception=False).error(f"创建群{group_id}对于{username}的订阅时发生错误: {e}")
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 @rss_unsub.handle()
 async def handle_rss(args: Message = CommandArg()):
@@ -322,9 +322,9 @@ async def handle_rss(args: Message = CommandArg()):
                         f"推送群组: {group_id}\n"
                     )
                 except Exception as e:
-                    logger.opt(exception=True).error(f"取消群{group_id}对于{username}的订阅时发生错误: {e}")
+                    logger.opt(exception=False).error(f"取消群{group_id}对于{username}的订阅时发生错误: {e}")
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 @rss_list.handle()
 async def handle_rss(args: Message = CommandArg()):
@@ -343,7 +343,7 @@ async def handle_rss(args: Message = CommandArg()):
                         username = data1.username
                         sub_list[username] = []
                     except Exception as e:
-                        logger.opt(exception=True).error(f"对于{username}的订阅时发生错误: {e}")
+                        logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
                 logger.success("已获取所有用户名")
                 for id in all:
                     try:
@@ -352,7 +352,7 @@ async def handle_rss(args: Message = CommandArg()):
                         group = int(data1.group)
                         sub_list.get(username).append(group)
                     except Exception as e:
-                        logger.opt(exception=True).error(f"群{group}对于{username}的订阅时发生错误: {e}")
+                        logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
                 logger.success("已获取所有群号")
                 for user in sub_list:
                     user_datil = await UserManger.get_Sign_by_student_id(db_session, user)
@@ -364,7 +364,7 @@ async def handle_rss(args: Message = CommandArg()):
                     msg += "\n"
                 await rss_unsub.send(msg,end="")
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
 
@@ -409,9 +409,9 @@ async def handle_rss(args: Message = CommandArg()):
                         f"平台：{Plantform}"
                     )
                 except Exception as e:
-                    logger.opt(exception=True).error(f"创建用户{user_name}至在可访问列表时发生错误: {e}")
+                    logger.opt(exception=False).error(f"创建用户{user_name}至在可访问列表时发生错误: {e}")
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 @user_unsub.handle()
 async def handle_rss(args: Message = CommandArg()):
@@ -439,9 +439,9 @@ async def handle_rss(args: Message = CommandArg()):
                         f"用户ID: {user_id}\n"
                     )
                 except Exception as e:
-                    logger.opt(exception=True).error(f"将用户{user_name}移出可访问列表时发生错误: {e}")
+                    logger.opt(exception=False).error(f"将用户{user_name}移出可访问列表时发生错误: {e}")
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 @user_list.handle()
 async def handle_rss(args: Message = CommandArg()):
@@ -464,7 +464,7 @@ async def handle_rss(args: Message = CommandArg()):
                     msg += f" 用户ID: {user_id}\n"
                 await rss_unsub.send(msg,end="")
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
 find = on_command("查询", priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN, rule=ignore_group)
@@ -491,7 +491,7 @@ async def handle_rss(args: Message = CommandArg()):
                             msg += f"{username}\n"
                     await find.send(msg,end="")
             except SQLAlchemyError as e:
-                logger.opt(exception=True).error(f"数据库操作错误: {e}")
+                logger.opt(exception=False).error(f"数据库操作错误: {e}")
         elif command.startswith("用户"):
             user_id = str(command.split(" ")[1])
             msg = f"📋 用户 {user_id} 推送群组列表：\n"
@@ -508,7 +508,7 @@ async def handle_rss(args: Message = CommandArg()):
                             msg += f"{group_id}\n"
                     await find.send(msg,end="")
             except SQLAlchemyError as e:
-                logger.opt(exception=True).error(f"数据库操作错误: {e}")
+                logger.opt(exception=False).error(f"数据库操作错误: {e}")
         else:
             await find.finish("请输入正确的命令")
 
@@ -616,9 +616,9 @@ async def handle_rss(args: Message = CommandArg()):
                 group = int(group_id)
                 await bot.send_group_msg(group_id=group,message=msg)
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
         except Exception as e:
-            logger.opt(exception=True).error(f"发送时发生错误: {e}")
+            logger.opt(exception=False).error(f"发送时发生错误: {e}")
 
 
 
@@ -644,7 +644,7 @@ async def auto_update_func():
                         username = data1.username
                         sub_list[username] = []
                     except Exception as e:
-                        logger.opt(exception=True).error(f"对于{username}的订阅时发生错误: {e}")
+                        logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
                 logger.success("已获取所有用户名")
                 for id in all:
                     try:
@@ -653,7 +653,7 @@ async def auto_update_func():
                         group = int(data1.group)
                         sub_list.get(username).append(group)
                     except Exception as e:
-                        logger.opt(exception=True).error(f"群{group}对于{username}的订阅时发生错误: {e}")
+                        logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
                 logger.success("已获取所有群号")
                 for user in sub_list:
                     try:
@@ -661,6 +661,6 @@ async def auto_update_func():
                         await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
                         time.sleep(1)
                     except Exception as e:
-                        logger.opt(exception=True).error(f"对于{user}的订阅时发生错误: {e}")
+                        logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
         except SQLAlchemyError as e:
-            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
