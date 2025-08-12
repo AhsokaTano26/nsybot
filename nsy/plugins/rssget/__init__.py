@@ -38,7 +38,7 @@ logger.add("data/log/info_log.txt", level="DEBUG",rotation="10 MB")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB")
 REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
 # 配置项（按需修改）
-RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址
+RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://127.0.0.1:1200
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 

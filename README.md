@@ -32,10 +32,10 @@
 ##### 使用Github的Action自动构建Docker镜像
 - [Docker镜像地址](https://hub.docker.com/r/tano26/nsybot/tags)
 >  - 注：部署是需本地创建db.sqlite3文件，并挂载至容器 ***app/data*** 目录下  
- >   - 默认端口为12035  
->   - 默认Rsshub地址为 *http://192.168.1.1:1200*  
+ >   - 默认端口为12035
 >   - 请于Docker容器的环境变量中给出 ***API_KEY*** 和 ***SECRET_KEY*** 为百度翻译API_KEY和SECRET_KEY  
 >   - 请于Docker容器的环境变量中给出 ***REFRESH_TIME*** 作为更新周期（单位为分钟）
+>   - 请于Docker容器的环境变量中给出 ***RSSHUB_HOST*** 作为RSSHub 实例地址 例如：RSSHUB_HOST=http://127.0.0.1:1200
 >   - 目前bot支持多平台订阅（例如：twitter、bilibili等），但需要在sqlite数据库Plantform表中手动添加  
 >   - 例：  
 >   ![这是图片](/docs/img.png "Magic Gardens")  
@@ -43,7 +43,7 @@
 ### 本地部署
 >本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)  
 - 将本项目克隆到本地，即可使用，但请注意，需要在项目根文件夹下 ***data*** 文件夹下创建 ***db.sqlite3*** 文件，并提前写入平台数据  
-- 同时请更改项目根文件夹下 ***/nsy/plugins/rssget/function.py*** 文件中 ***API_KEY*** 和 ***SECRET_KEY*** 为自己的百度翻译API_KEY和SECRET_KEY  
+- 同时请更改项目根文件夹下 ***/nsy/plugins/rssget/function.py*** 以及 ***/nsy/plugins/rssget/____init____.py*** 文件中 环境变量项 
 
 ---
 # 使用注意事项
@@ -53,7 +53,7 @@
 # 感谢以下项目或服务
 
 不分先后
-* [Lanunion](https://baike.baidu.com/item/%E9%87%8D%E5%BA%86%E5%A4%A7%E5%AD%A6%E8%93%9D%E7%9B%9F/18227014)
+* [CQU Lanunion](https://baike.baidu.com/item/%E9%87%8D%E5%BA%86%E5%A4%A7%E5%AD%A6%E8%93%9D%E7%9B%9F/18227014)
 * [RSSHub](https://github.com/DIYgod/RSSHub)
 * [Nonebot](https://github.com/nonebot/nonebot2)
 * [百度机器翻译](https://cloud.baidu.com/doc/API/index.html)
