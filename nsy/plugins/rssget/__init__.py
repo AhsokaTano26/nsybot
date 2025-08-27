@@ -156,7 +156,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     userid = command.split(" ")[0]
     try:
-        num = command.split(" ")[1]
+        num = int(command.split(" ")[1])
     except:
         num = 0
     sheet1 = await User_get()
@@ -585,7 +585,7 @@ async def handle_rss(event: GroupMessageEvent):
     msg += "项目地址：https://github.com/AhsokaTano26/nsybot"
 
     try:
-        with open('../../../docs/help.png', 'rb') as image_file:
+        with open('help.png', 'rb') as image_file:
             img = image_file.read()
         image_seg = MessageSegment.image(img)
         await bot.call_api("send_group_msg", **{
