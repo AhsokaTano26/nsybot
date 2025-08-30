@@ -626,7 +626,7 @@ async def signal_():
     await signal.finish(str(config.if_first_time_start))
 
 signal_on = on_command("/信号否", priority=10, permission=SUPERUSER,rule=ignore_group)
-@signal.handle()
+@signal_on.handle()
 async def signal_on_():
     config.if_first_time_start = False
     await signal_on.finish(str(config.if_first_time_start))
