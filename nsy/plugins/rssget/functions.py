@@ -226,7 +226,7 @@ class rss_get():
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
                                                     if config.if_first_time_start:
-                                                        continue
+                                                        logger.info("第一次启动，跳过发送")
                                                     else:
                                                         # 构建文字消息
                                                         msg = [
@@ -257,6 +257,8 @@ class rss_get():
                                                                 "message": "\n".join(trans_msg)
                                                             })
 
+                                                        logger.info("成功发送文字信息")
+
                                                         # 发送图片（单独处理）
                                                         if content["images"]:
                                                             await bot.call_api("send_group_msg", **{
@@ -265,6 +267,9 @@ class rss_get():
                                                             })
                                                             for index, img_url in enumerate(content["images"], 1):
                                                                 await rss_get.send_onebot_image(self, img_url, group_id,num=0)
+
+                                                        logger.info("成功发送图片信息")
+
                                                 except Exception as e:
                                                     logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
                                         except SQLAlchemyError as e:
@@ -293,7 +298,7 @@ class rss_get():
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
                                                     if config.if_first_time_start:
-                                                        continue
+                                                        logger.info("第一次启动，跳过发送")
                                                     else:
                                                         # 构建文字消息
                                                         msg = [
@@ -324,6 +329,8 @@ class rss_get():
                                                                 "message": "\n".join(trans_msg)
                                                             })
 
+                                                        logger.info("成功发送文字信息")
+
                                                         # 发送图片（单独处理）
                                                         if content["images"]:
                                                             await bot.call_api("send_group_msg", **{
@@ -332,6 +339,8 @@ class rss_get():
                                                             })
                                                             for index, img_url in enumerate(content["images"], 1):
                                                                 await rss_get.send_onebot_image(self, img_url, group_id, num=0)
+
+                                                        logger.info("成功发送图片信息")
                                                 except Exception as e:
                                                     logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
                                         except SQLAlchemyError as e:

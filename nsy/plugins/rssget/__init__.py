@@ -674,9 +674,9 @@ async def auto_update_func():
                     except Exception as e:
                         logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
 
-                config.if_first_time_start = False
-                logger.info(f"config.if_first_time_start：{config.if_first_time_start}")
+            config.if_first_time_start = False
+            logger.info(f"config.if_first_time_start：{config.if_first_time_start}")
 
-                logger.info(f"{datetime.now()} 订阅处理完毕")
+            logger.info(f"{datetime.now()} 订阅处理完毕")
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
