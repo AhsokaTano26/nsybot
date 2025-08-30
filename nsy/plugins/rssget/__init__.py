@@ -620,6 +620,11 @@ async def handle_rss(args: Message = CommandArg()):
         except Exception as e:
             logger.opt(exception=False).error(f"发送时发生错误: {e}")
 
+signal = on_command("/信号", priority=10, permission=SUPERUSER,rule=ignore_group)
+@signal.handle()
+async def signal():
+    await signal.send(str(config.if_first_time_start))
+
 
 
 
