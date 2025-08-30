@@ -524,7 +524,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     userid = args.extract_plain_text().strip()
     sheet1 = await User_get()
     if not userid:
-        await rss_cmd.finish("请输入Twitter用户名，例如：list aibaaiai")
+        await rss_cmd.finish("请输入Twitter用户名，例如：文章列表 aibaaiai")
     elif userid not in sheet1:
         await rss_cmd.finish("请求被否决")
     else:
@@ -553,12 +553,12 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                 latest = data.get("entries")[i]
                 content = extract_content(latest, if_need_trans)
                 if not content['trans_title'] == None:
-                    msg += (f"序号{i}\n"
-                            f"标题{content['title']}\n"
-                            f"标题翻译{content['trans_title']}\n")
+                    msg += (f"\n序号  {i}\n"
+                            f"  标题  {content['title']}\n"
+                            f"  标题翻译  {content['trans_title']}\n")
                 else:
-                    msg += (f"序号{i}\n"
-                            f"标题{content['title']}\n")
+                    msg += (f"\n序号  {i}\n"
+                            f"  标题  {content['title']}\n")
             await list.send(msg, end="")
 
 help = on_command("/help", aliases={"/帮助"}, priority=10,rule=ignore_group & to_me())
@@ -587,11 +587,11 @@ async def handle_rss(event: GroupMessageEvent):
     try:
         with open('help.png', 'rb') as image_file:
             img = image_file.read()
-        image_seg = MessageSegment.image(img)
-        await bot.call_api("send_group_msg", **{
-                    "group_id": group_id,
-                    "message": image_seg
-                })
+            image_seg = MessageSegment.image(img)
+            await bot.call_api("send_group_msg", **{
+                        "group_id": group_id,
+                        "message": image_seg
+                    })
     except:
         await help.send(msg,end="")
 
@@ -629,7 +629,7 @@ async def auto_update_func():
     """
     定时向订阅群组发送推文
     """
-    logger.info("开始执行定时任务")
+    logger.info(f"{datetime.now()} 开始处理订阅")
     async with (get_session() as db_session):
         try:
             flag = await SubscribeManger.is_database_empty(db_session)
@@ -645,7 +645,7 @@ async def auto_update_func():
                         sub_list[username] = []
                     except Exception as e:
                         logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
-                logger.success("已获取所有用户名")
+                logger.success(f"{datetime.now()} 已获取所有用户名")
                 for id in all:
                     try:
                         data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
@@ -654,13 +654,17 @@ async def auto_update_func():
                         sub_list.get(username).append(group)
                     except Exception as e:
                         logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
-                logger.success("已获取所有群号")
+                logger.success(f"{datetime.now()} 已获取所有群号")
                 for user in sub_list:
                     try:
-                        logger.info(f"开始处理对 {user} 的订阅")
+                        logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
                         await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
                         time.sleep(1)
                     except Exception as e:
                         logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
+
+                config.if_first_time_start = False
+
+                logger.info(f"{datetime.now()} 订阅处理完毕")
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")

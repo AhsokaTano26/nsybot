@@ -5,13 +5,12 @@ import httpx
 from datetime import datetime, timedelta
 import time
 from bs4 import BeautifulSoup
-from nonebot import on_command, get_bot, require, Bot
+from nonebot import on_command, get_bot, require, Bot, get_plugin_config
 from nonebot.adapters.onebot.v11 import MessageSegment, Message
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
-
 
 from .encrypt import encrypt
 from .models_method import DetailManger, UserManger, ContentManger, PlantformManger
@@ -19,6 +18,7 @@ from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
 from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
+from .config import Config
 
 
 async def User_get():
@@ -35,6 +35,7 @@ async def User_name_get(id):
 RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://127.0.0.1:1200
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
+config = get_plugin_config(Config)
 API_KEY = os.getenv('API_KEY')
 SECRET_KEY = os.getenv('SECRET_KEY')
 
@@ -192,7 +193,7 @@ class rss_get():
                     logger.info("该用户暂无动态或不存在")
 
                 # 处理最新五条推文
-                for data_number in range(0,4):
+                for data_number in range(0,3):
                     logger.info(f"正在处理 {userid} 的第 {data_number + 1} 条数据")
                     latest = data.entries[data_number]
                     trueid = await get_id(latest)
@@ -224,43 +225,46 @@ class rss_get():
                                                         updated=datetime.now(),
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
-                                                    # 构建文字消息
-                                                    msg = [
-                                                        f"🐦 用户 {content["username"]} 最新动态",
-                                                        f"📌 {content['title']}",
-                                                        f"⏰ {content['time']}",
-                                                        f"🔗 {content['link']}",
-                                                        "\n📝 正文：",
-                                                        content['text']
-                                                    ]
-
-                                                    if if_need_trans == 1:
-                                                        trans_msg = [
-                                                            f"📌 {content['trans_title']}"
-                                                            "\n📝 翻译：",
-                                                            content["trans_text"],
-                                                            "【翻译由百度文本翻译-通用版提供】"
+                                                    if config.if_first_time_start:
+                                                        continue
+                                                    else:
+                                                        # 构建文字消息
+                                                        msg = [
+                                                            f"🐦 用户 {content["username"]} 最新动态",
+                                                            f"📌 {content['title']}",
+                                                            f"⏰ {content['time']}",
+                                                            f"🔗 {content['link']}",
+                                                            "\n📝 正文：",
+                                                            content['text']
                                                         ]
 
-                                                    # 先发送文字内容
-                                                    await bot.call_api("send_group_msg", **{
-                                                        "group_id": group_id,
-                                                        "message": "\n".join(msg)
-                                                    })
-                                                    if if_need_trans == 1:
-                                                        await bot.call_api("send_group_msg", **{
-                                                            "group_id": group_id,
-                                                            "message": "\n".join(trans_msg)
-                                                        })
+                                                        if if_need_trans == 1:
+                                                            trans_msg = [
+                                                                f"📌 {content['trans_title']}"
+                                                                "\n📝 翻译：",
+                                                                content["trans_text"],
+                                                                "【翻译由百度文本翻译-通用版提供】"
+                                                            ]
 
-                                                    # 发送图片（单独处理）
-                                                    if content["images"]:
+                                                        # 先发送文字内容
                                                         await bot.call_api("send_group_msg", **{
                                                             "group_id": group_id,
-                                                            "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                                            "message": "\n".join(msg)
                                                         })
-                                                        for index, img_url in enumerate(content["images"], 1):
-                                                            await rss_get.send_onebot_image(self, img_url, group_id,num=0)
+                                                        if if_need_trans == 1:
+                                                            await bot.call_api("send_group_msg", **{
+                                                                "group_id": group_id,
+                                                                "message": "\n".join(trans_msg)
+                                                            })
+
+                                                        # 发送图片（单独处理）
+                                                        if content["images"]:
+                                                            await bot.call_api("send_group_msg", **{
+                                                                "group_id": group_id,
+                                                                "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                                            })
+                                                            for index, img_url in enumerate(content["images"], 1):
+                                                                await rss_get.send_onebot_image(self, img_url, group_id,num=0)
                                                 except Exception as e:
                                                     logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
                                         except SQLAlchemyError as e:
@@ -288,43 +292,46 @@ class rss_get():
 
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
-                                                    # 构建文字消息
-                                                    msg = [
-                                                        f"🐦 用户 {content["username"]} 最新动态",
-                                                        f"📌 {content['title']}",
-                                                        f"⏰ {content['time']}",
-                                                        f"🔗 {content['link']}",
-                                                        "\n📝 正文：",
-                                                        content['text']
-                                                    ]
-
-                                                    if if_need_trans == 1:
-                                                        trans_msg = [
-                                                            f"📌 {content['trans_title']}"
-                                                            "\n📝 翻译：",
-                                                            content["trans_text"],
-                                                            "【翻译由百度文本翻译-通用版提供】"
+                                                    if config.if_first_time_start:
+                                                        continue
+                                                    else:
+                                                        # 构建文字消息
+                                                        msg = [
+                                                            f"🐦 用户 {content["username"]} 最新动态",
+                                                            f"📌 {content['title']}",
+                                                            f"⏰ {content['time']}",
+                                                            f"🔗 {content['link']}",
+                                                            "\n📝 正文：",
+                                                            content['text']
                                                         ]
 
-                                                    # 先发送文字内容
-                                                    await bot.call_api("send_group_msg", **{
-                                                        "group_id": group_id,
-                                                        "message": "\n".join(msg)
-                                                    })
-                                                    if if_need_trans == 1:
-                                                        await bot.call_api("send_group_msg", **{
-                                                            "group_id": group_id,
-                                                            "message": "\n".join(trans_msg)
-                                                        })
+                                                        if if_need_trans == 1:
+                                                            trans_msg = [
+                                                                f"📌 {content['trans_title']}"
+                                                                "\n📝 翻译：",
+                                                                content["trans_text"],
+                                                                "【翻译由百度文本翻译-通用版提供】"
+                                                            ]
 
-                                                    # 发送图片（单独处理）
-                                                    if content["images"]:
+                                                        # 先发送文字内容
                                                         await bot.call_api("send_group_msg", **{
                                                             "group_id": group_id,
-                                                            "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                                            "message": "\n".join(msg)
                                                         })
-                                                        for index, img_url in enumerate(content["images"], 1):
-                                                            await rss_get.send_onebot_image(self, img_url, group_id, num=0)
+                                                        if if_need_trans == 1:
+                                                            await bot.call_api("send_group_msg", **{
+                                                                "group_id": group_id,
+                                                                "message": "\n".join(trans_msg)
+                                                            })
+
+                                                        # 发送图片（单独处理）
+                                                        if content["images"]:
+                                                            await bot.call_api("send_group_msg", **{
+                                                                "group_id": group_id,
+                                                                "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                                            })
+                                                            for index, img_url in enumerate(content["images"], 1):
+                                                                await rss_get.send_onebot_image(self, img_url, group_id, num=0)
                                                 except Exception as e:
                                                     logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
                                         except SQLAlchemyError as e:
