@@ -226,7 +226,7 @@ class rss_get():
                                                         updated=datetime.now(),
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
-                                                    if str(config.if_first_time_start) == "True":
+                                                    if config.if_first_time_start:
                                                         logger.info("第一次启动，跳过发送")
                                                         logger.debug(f"if_first_time_start：{config.if_first_time_start}")
                                                     else:
@@ -300,7 +300,7 @@ class rss_get():
 
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
-                                                    if str(config.if_first_time_start) == "True":
+                                                    if config.if_first_time_start:
                                                         logger.info("第一次启动，跳过发送")
                                                         logger.debug(f"if_first_time_start：{config.if_first_time_start}")
                                                     else:
@@ -358,3 +358,5 @@ class rss_get():
                         except Exception as e:
                             logger.opt(exception=False).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
                         time.sleep(0.1)
+    async def change_config(self):
+        config.if_first_time_start = False
