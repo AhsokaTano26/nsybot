@@ -40,6 +40,7 @@ API_KEY = os.getenv('API_KEY')
 SECRET_KEY = os.getenv('SECRET_KEY')
 
 
+
 async def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
     B = BaiDu()
@@ -225,9 +226,11 @@ class rss_get():
                                                         updated=datetime.now(),
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
-                                                    if config.if_first_time_start:
+                                                    if str(config.if_first_time_start) == "True":
                                                         logger.info("第一次启动，跳过发送")
+                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
                                                     else:
+                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
                                                         # 构建文字消息
                                                         msg = [
                                                             f"🐦 用户 {content["username"]} 最新动态",
@@ -297,9 +300,11 @@ class rss_get():
 
                                                     )
                                                     logger.info(f"创建数据: {content.get('id')}")
-                                                    if config.if_first_time_start:
+                                                    if str(config.if_first_time_start) == "True":
                                                         logger.info("第一次启动，跳过发送")
+                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
                                                     else:
+                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
                                                         # 构建文字消息
                                                         msg = [
                                                             f"🐦 用户 {content["username"]} 最新动态",
