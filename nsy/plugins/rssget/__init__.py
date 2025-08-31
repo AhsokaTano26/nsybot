@@ -623,13 +623,15 @@ async def handle_rss(args: Message = CommandArg()):
 signal = on_command("/信号", priority=10, permission=SUPERUSER,rule=ignore_group)
 @signal.handle()
 async def signal_():
-    await signal.finish(str(config.if_first_time_start))
+    signal = await rss_get().get_signal()
+    await signal.finish(signal)
 
 signal_on = on_command("/信号否", priority=10, permission=SUPERUSER,rule=ignore_group)
 @signal_on.handle()
 async def signal_on_():
-    config.if_first_time_start = False
-    await signal_on.finish(str(config.if_first_time_start))
+    await rss_get().change_config()
+    signal = await rss_get().get_signal()
+    await signal_on.finish(signal)
 
 
 

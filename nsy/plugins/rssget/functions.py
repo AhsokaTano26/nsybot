@@ -360,3 +360,5 @@ class rss_get():
                         time.sleep(0.1)
     async def change_config(self):
         config.if_first_time_start = False
+    async def get_signal(self):
+        return str(config.if_first_time_start)
