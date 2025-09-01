@@ -39,6 +39,7 @@ config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="DEBUG",rotation="10 MB", retention='3 days')
 logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB", retention='7 days')
 REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
+MODEL_NAME = os.getenv('MODEL_NAME')
 # 配置项（按需修改）
 RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://127.0.0.1:1200
 TIMEOUT = 30  # 请求超时时间
@@ -204,7 +205,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             trans_msg = [
                                 "📝 翻译：",
                                 content["trans_text"],
-                                "【翻译由qwen2.5提供】"
+                                f"【翻译由{MODEL_NAME}提供】"
                             ]
                         # 先发送文字内容
                         await rss_cmd.send("\n".join(msg))
@@ -234,7 +235,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             trans_msg = [
                                 "📝 翻译：",
                                 content["trans_text"],
-                                "【翻译由qwen2.5提供】"
+                                f"【翻译由{MODEL_NAME}提供】"
                             ]
                         # 先发送文字内容
                         await rss_cmd.send("\n".join(msg))

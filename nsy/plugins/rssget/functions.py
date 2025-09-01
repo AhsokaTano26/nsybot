@@ -37,6 +37,7 @@ RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://12
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 config = get_plugin_config(Config)
+MODEL_NAME = os.getenv('MODEL_NAME')
 
 
 
@@ -206,7 +207,7 @@ class rss_get():
                                                             trans_msg = [
                                                                 "📝 翻译：",
                                                                 content["trans_text"],
-                                                                "【翻译由qwen2.5提供】"
+                                                                f"【翻译由{MODEL_NAME}提供】"
                                                             ]
 
                                                         # 先发送文字内容
@@ -278,7 +279,7 @@ class rss_get():
                                                             trans_msg = [
                                                                 "📝 翻译：",
                                                                 content["trans_text"],
-                                                                "【翻译由qwen2.5提供】"
+                                                                f"【翻译由{MODEL_NAME}提供】"
                                                             ]
 
                                                         # 先发送文字内容
