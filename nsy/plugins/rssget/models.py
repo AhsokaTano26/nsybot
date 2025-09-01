@@ -35,7 +35,6 @@ class Content(Model):
     time = Column(String(255), nullable=True)
     link = Column(String(255), nullable=True)
     text = Column(Text, nullable=True)
-    trans_title = Column(String(255), nullable=True)
     trans_text = Column(String(255), nullable=True)
     image_num = Column(String(255), nullable=True)
     images = Column(Text, nullable=True)

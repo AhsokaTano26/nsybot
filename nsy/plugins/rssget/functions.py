@@ -157,15 +157,16 @@ class rss_get():
 
                 # 处理最新五条推文
                 for data_number in range(0,3):
-                    logger.info(f"正在处理 {userid} 的第 {data_number + 1} 条数据")
+                    logger.info(f"正在处理 {userid} | {username} 的第 {data_number + 1} 条数据")
                     latest = data.entries[data_number]
                     trueid = await get_id(latest)
                     for group_id in group_id_list:
                         try:
-                            logger.info(f"正在处理 {group_id} 对 {userid} 的订阅")
+                            logger.info(f"正在处理 {group_id} 对 {userid} | {username}的订阅")
                             id_with_group = trueid + "-" + str(group_id)
-                            flag = await if_self_trans(username,latest)
-                            if flag != False:
+                            flag1 = await if_self_trans(username,latest)
+                            flag2 = await if_trans(latest)
+                            if flag1 and flag2:
                                 try:
                                     existing_lanmsg = await ContentManger.get_Sign_by_student_id(
                                         db_session, trueid)
@@ -304,6 +305,7 @@ class rss_get():
                                                                 await rss_get.send_onebot_image(self, img_url, group_id, num=0)
 
                                                         logger.info("成功发送图片信息")
+
                                                 except Exception as e:
                                                     logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
                                         except SQLAlchemyError as e:
