@@ -37,6 +37,7 @@ async def update_text(dic):
                             image_num=image_num,
                             images=images
                             )
+                        logger.info(f"成功创建对于 {username} 的 {id} 推文")
                     except Exception as e:
                         logger.error(f"创建对于 {username} 的 {id} 推文时发生错误: {e}")
         except SQLAlchemyError as e:
@@ -62,6 +63,7 @@ async def update_text(dic):
                             trans_text=trans_text,
                             image_num=0,
                             )
+                        logger.info(f"成功创建对于 {username} 的 {id} 推文")
                     except Exception as e:
                         logger.error(f"创建对于 {username} 的 {id} 推文时发生错误: {e}")
         except SQLAlchemyError as e:
@@ -94,8 +96,10 @@ async def get_text(id) -> dict[str, str]:
         dic["image_num"] = image_num
         if int(image_num) == 0:
             dic["images"] = None
+            logger.info(f"成功获取对于 {username} 的 {id} 推文")
             return dic
         else:
             images = ast.literal_eval(msg.images)
             dic["images"] = images
+            logger.info(f"成功获取对于 {username} 的 {id} 推文")
             return dic
