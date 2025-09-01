@@ -15,11 +15,12 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
 
-from .functions import BaiDu, rss_get
+from .functions import rss_get
 from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger
 from .models import Detail
 from .encrypt import encrypt
 from .update_text import update_text, get_text
+from .translation import BaiDu
 from .get_id import get_id
 from .config import Config
 

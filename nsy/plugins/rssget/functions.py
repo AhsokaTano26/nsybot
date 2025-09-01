@@ -18,6 +18,7 @@ from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
 from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
+from .translation import BaiDu
 from .config import Config
 
 
@@ -56,7 +57,8 @@ async def extract_content(entry,if_need_trans) -> dict:
     clean_text_old = await remove_html_tag_soup(entry.description)
     clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
     if if_need_trans == 1:
-        trans_text1 = B.main(BeautifulSoup(clean_text_old, "html.parser").get_text("+"))
+        trans_text = BeautifulSoup(clean_text_old, "html.parser").get_text("+")
+        trans_text1 = B.main(trans_text)
         trans_text = trans_text1.replace("+", "\n")
         trans_title = B.main(entry.title)
     else:
@@ -101,43 +103,6 @@ async def fetch_feed(url: str) -> dict:
     except Exception as e:
         logger.opt(exception=False).error(f"RSS请求失败: {str(e)}")
         return {"error": f"获取内容失败: {str(e)}"}
-
-
-
-class BaiDu():
-    def main(self, body=str):
-        url = "https://aip.baidubce.com/rpc/2.0/mt/texttrans/v1?access_token=" + self.get_access_token()
-
-        payload = json.dumps({
-            "from": "auto",
-            "to": "zh",
-            "q": f"{body}"
-        }, ensure_ascii=False)
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
-
-        response = requests.request("POST", url, headers=headers, data=payload.encode("utf-8"))
-
-        json_result = response.text
-        result = json.loads(json_result)
-
-        # 提取单个 dst
-        first_translation = result["result"]["trans_result"][0]["dst"]
-
-        return first_translation
-
-
-    def get_access_token(self):
-        """
-        使用 AK，SK 生成鉴权签名（Access Token）
-        :return: access_token，或是None(如果错误)
-        """
-        url = "https://aip.baidubce.com/oauth/2.0/token"
-        params = {"grant_type": "client_credentials", "client_id": API_KEY, "client_secret": SECRET_KEY}
-        return str(requests.post(url, params=params).json().get("access_token"))
-
 
 
 class rss_get():
