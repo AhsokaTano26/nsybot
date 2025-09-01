@@ -20,7 +20,7 @@ from .models_method import DetailManger, SubscribeManger, UserManger, ContentMan
 from .models import Detail
 from .encrypt import encrypt
 from .update_text import update_text, get_text
-from .translation import BaiDu
+from .translation import BaiDu, Ollama
 from .get_id import get_id
 from .config import Config
 
@@ -32,7 +32,8 @@ __plugin_meta__ = PluginMetadata(
     type="QQbot",
     homepage="https://github.com/your/repo",
 )
-B = BaiDu()  # 初始化翻译类
+#B = BaiDu()  # 初始化翻译类
+B = Ollama()
 R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="DEBUG",rotation="10 MB", retention='3 days')
@@ -202,7 +203,8 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                         if if_need_trans == 1:
                             trans_msg = [
                                 "📝 翻译：",
-                                content["trans_text"]
+                                content["trans_text"],
+                                "【翻译由qwen2.5提供】"
                             ]
                         # 先发送文字内容
                         await rss_cmd.send("\n".join(msg))
@@ -231,7 +233,8 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                         if if_need_trans == 1:
                             trans_msg = [
                                 "📝 翻译：",
-                                content["trans_text"]
+                                content["trans_text"],
+                                "【翻译由qwen2.5提供】"
                             ]
                         # 先发送文字内容
                         await rss_cmd.send("\n".join(msg))

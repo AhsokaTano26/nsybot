@@ -18,7 +18,7 @@ from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
 from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
-from .translation import BaiDu
+from .translation import BaiDu, Ollama
 from .config import Config
 
 
@@ -37,14 +37,13 @@ RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://12
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 config = get_plugin_config(Config)
-API_KEY = os.getenv('API_KEY')
-SECRET_KEY = os.getenv('SECRET_KEY')
 
 
 
 async def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
-    B = BaiDu()
+    #B = BaiDu()
+    B = Ollama()
     publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
     # 增加指定小时
@@ -207,7 +206,7 @@ class rss_get():
                                                             trans_msg = [
                                                                 "📝 翻译：",
                                                                 content["trans_text"],
-                                                                "【翻译由百度文本翻译-通用版提供】"
+                                                                "【翻译由qwen2.5提供】"
                                                             ]
 
                                                         # 先发送文字内容
@@ -279,7 +278,7 @@ class rss_get():
                                                             trans_msg = [
                                                                 "📝 翻译：",
                                                                 content["trans_text"],
-                                                                "【翻译由百度文本翻译-通用版提供】"
+                                                                "【翻译由qwen2.5提供】"
                                                             ]
 
                                                         # 先发送文字内容
