@@ -165,7 +165,7 @@ class rss_get():
                             id_with_group = trueid + "-" + str(group_id)
                             flag1 = await if_self_trans(username,latest)
                             flag2 = await if_trans(latest)
-                            if flag1 and flag2:
+                            if flag1:
                                 try:
                                     existing_lanmsg = await ContentManger.get_Sign_by_student_id(
                                         db_session, trueid)
