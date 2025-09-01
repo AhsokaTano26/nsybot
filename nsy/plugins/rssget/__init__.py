@@ -91,7 +91,6 @@ def extract_content(entry,if_need_trans) -> dict:
         trans_text = trans_text1.replace("+", "\n")
     else:
         trans_text = None
-        trans_title = None
     # 提取图片（优先媒体内容）
     images = []
     for media in getattr(entry, "media_content", []):
@@ -110,6 +109,7 @@ def extract_content(entry,if_need_trans) -> dict:
             images.append(img['src'])
 
     return {
+        "title": entry.title,
         "time": published,
         "link": entry.link,
         "text": clean_text,
@@ -230,7 +230,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
                         if if_need_trans == 1:
                             trans_msg = [
-                                "\n📝 翻译：",
+                                "📝 翻译：",
                                 content["trans_text"]
                             ]
                         # 先发送文字内容

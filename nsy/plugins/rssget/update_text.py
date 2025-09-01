@@ -10,7 +10,6 @@ async def update_text(dic):
     time = dic["time"]
     link = dic["link"]
     text = dic["text"]
-    trans_title = dic["trans_title"]
     trans_text = dic["trans_text"]
     username = dic["username"]
     if dic["images"]:
@@ -34,7 +33,6 @@ async def update_text(dic):
                             time=time,
                             link=link,
                             text=text,
-                            trans_title=trans_title,
                             trans_text=trans_text,
                             image_num=image_num,
                             images=images
@@ -61,7 +59,6 @@ async def update_text(dic):
                             time=time,
                             link=link,
                             text=text,
-                            trans_title=trans_title,
                             trans_text=trans_text,
                             image_num=0,
                             )
@@ -85,7 +82,6 @@ async def get_text(id) -> dict[str, str]:
         time = msg.time
         link = msg.link
         text = msg.text
-        trans_title = msg.trans_title
         trans_text = msg.trans_text
 
         dic["id"] = id
@@ -93,7 +89,6 @@ async def get_text(id) -> dict[str, str]:
         dic["time"] = time
         dic["link"] = link
         dic["text"] = text
-        dic["trans_title"] = trans_title
         dic["trans_text"] = trans_text
         dic["username"] = username
         dic["image_num"] = image_num

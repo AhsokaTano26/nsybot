@@ -62,7 +62,6 @@ async def extract_content(entry,if_need_trans) -> dict:
         trans_text = trans_text1.replace("+", "\n")
     else:
         trans_text = None
-        trans_title = None
 
     # 提取图片（优先媒体内容）
     images = []
@@ -205,7 +204,7 @@ class rss_get():
 
                                                         if if_need_trans == 1:
                                                             trans_msg = [
-                                                                "\n📝 翻译：",
+                                                                "📝 翻译：",
                                                                 content["trans_text"],
                                                                 "【翻译由百度文本翻译-通用版提供】"
                                                             ]
@@ -277,7 +276,7 @@ class rss_get():
 
                                                         if if_need_trans == 1:
                                                             trans_msg = [
-                                                                "\n📝 翻译：",
+                                                                "📝 翻译：",
                                                                 content["trans_text"],
                                                                 "【翻译由百度文本翻译-通用版提供】"
                                                             ]
