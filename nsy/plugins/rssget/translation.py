@@ -48,7 +48,7 @@ class Ollama:
         pattern = r'<think>.*?</think>'
         return re.sub(pattern, '', text, flags=re.DOTALL)
 
-    def translate_with_ollama(self,text, source_lang="日文", target_lang="中文", model="qwen2.5:1.5b"):
+    def main(self,text, source_lang="日文", target_lang="中文", model="qwen2.5:1.5b"):
         """
         使用 Ollama 进行翻译
 
