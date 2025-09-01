@@ -5,6 +5,7 @@ import re
 
 API_KEY = os.getenv('API_KEY')
 SECRET_KEY = os.getenv('SECRET_KEY')
+MODEL_NAME = os.getenv('MODEL_NAME')
 
 class BaiDu:
     def main(self, body=str):
@@ -48,7 +49,7 @@ class Ollama:
         pattern = r'<think>.*?</think>'
         return re.sub(pattern, '', text, flags=re.DOTALL)
 
-    def main(self,text, source_lang="日文", target_lang="中文", model="qwen2.5:1.5b"):
+    def main(self,text, source_lang="日文", target_lang="中文", model=MODEL_NAME):
         """
         使用 Ollama 进行翻译
 
@@ -67,7 +68,7 @@ class Ollama:
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "keep_alive": "0s"
+            "keep_alive": "1s"
         }
 
         try:
