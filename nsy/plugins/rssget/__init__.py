@@ -89,7 +89,6 @@ def extract_content(entry,if_need_trans) -> dict:
     if if_need_trans == 1:
         trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("+"))
         trans_text = trans_text1.replace("+", "\n")
-        trans_title = B.main(entry.title)
     else:
         trans_text = None
         trans_title = None
@@ -111,11 +110,9 @@ def extract_content(entry,if_need_trans) -> dict:
             images.append(img['src'])
 
     return {
-        "title": entry.title,
         "time": published,
         "link": entry.link,
         "text": clean_text,
-        "trans_title": trans_title,
         "trans_text": trans_text,
         "images": images[:MAX_IMAGES]
     }
@@ -196,7 +193,6 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                         content = await get_text(trueid)    #从本地数据库获取信息
                         msg = [
                             f"🐦 用户 {username} 最新动态",
-                            f"📌 {content['title']}",
                             f"⏰ {content['time']}",
                             f"🔗 {content['link']}",
                             "\n📝 正文：",
@@ -205,7 +201,6 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
                         if if_need_trans == 1:
                             trans_msg = [
-                                f"📌 {content['trans_title']}"
                                 "\n📝 翻译：",
                                 content["trans_text"]
                             ]
@@ -227,7 +222,6 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                         # 构建文字消息
                         msg = [
                             f"🐦 用户 {username} 最新动态",
-                            f"📌 {content['title']}",
                             f"⏰ {content['time']}",
                             f"🔗 {content['link']}",
                             "\n📝 正文：",
@@ -236,7 +230,6 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
                         if if_need_trans == 1:
                             trans_msg = [
-                                f"📌 {content['trans_title']}"
                                 "\n📝 翻译：",
                                 content["trans_text"]
                             ]

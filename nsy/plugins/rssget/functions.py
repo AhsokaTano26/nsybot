@@ -60,7 +60,6 @@ async def extract_content(entry,if_need_trans) -> dict:
         trans_text = BeautifulSoup(clean_text_old, "html.parser").get_text("+")
         trans_text1 = B.main(trans_text)
         trans_text = trans_text1.replace("+", "\n")
-        trans_title = B.main(entry.title)
     else:
         trans_text = None
         trans_title = None
@@ -87,7 +86,6 @@ async def extract_content(entry,if_need_trans) -> dict:
         "time": published,
         "link": entry.link,
         "text": clean_text,
-        "trans_title": trans_title,
         "trans_text": trans_text,
         "images": images[:MAX_IMAGES]
     }
@@ -199,7 +197,6 @@ class rss_get():
                                                         # 构建文字消息
                                                         msg = [
                                                             f"🐦 用户 {content["username"]} 最新动态",
-                                                            f"📌 {content['title']}",
                                                             f"⏰ {content['time']}",
                                                             f"🔗 {content['link']}",
                                                             "\n📝 正文：",
@@ -208,7 +205,6 @@ class rss_get():
 
                                                         if if_need_trans == 1:
                                                             trans_msg = [
-                                                                f"📌 {content['trans_title']}"
                                                                 "\n📝 翻译：",
                                                                 content["trans_text"],
                                                                 "【翻译由百度文本翻译-通用版提供】"
@@ -273,7 +269,6 @@ class rss_get():
                                                         # 构建文字消息
                                                         msg = [
                                                             f"🐦 用户 {content["username"]} 最新动态",
-                                                            f"📌 {content['title']}",
                                                             f"⏰ {content['time']}",
                                                             f"🔗 {content['link']}",
                                                             "\n📝 正文：",
@@ -282,7 +277,6 @@ class rss_get():
 
                                                         if if_need_trans == 1:
                                                             trans_msg = [
-                                                                f"📌 {content['trans_title']}"
                                                                 "\n📝 翻译：",
                                                                 content["trans_text"],
                                                                 "【翻译由百度文本翻译-通用版提供】"
