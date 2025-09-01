@@ -201,7 +201,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
                         if if_need_trans == 1:
                             trans_msg = [
-                                "\n📝 翻译：",
+                                "📝 翻译：",
                                 content["trans_text"]
                             ]
                         # 先发送文字内容
@@ -671,7 +671,7 @@ async def auto_update_func():
                         logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
 
             await rss_get().change_config()
-            logger.info(f"config.if_first_time_start：{config.if_first_time_start}")
+            logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
 
             logger.info(f"{datetime.now()} 订阅处理完毕")
         except SQLAlchemyError as e:
