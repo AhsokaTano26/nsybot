@@ -32,11 +32,11 @@ __plugin_meta__ = PluginMetadata(
     type="QQbot",
     homepage="https://github.com/your/repo",
 )
-#B = BaiDu()  # 初始化翻译类
-B = Ollama()
+B = BaiDu()  # 初始化翻译类
+#B = Ollama()
 R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
-logger.add("data/log/info_log.txt", level="INFO",rotation="10 MB")
+logger.add("data/log/info_log.txt", level="INFO",rotation="10 MB", retention="10 days")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB")
 REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
 MODEL_NAME = os.getenv('MODEL_NAME')
