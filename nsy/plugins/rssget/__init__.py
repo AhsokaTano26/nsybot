@@ -90,11 +90,11 @@ def is_current_time_in_period(start_time_str, end_time_str):
         bool: 当前时间是否在时间段内
     """
     # 获取当前时间
-    now = datetime.datetime.now().time()
+    now = datetime.now().time()
 
     # 将字符串时间转换为time对象
-    start_time = datetime.datetime.strptime(start_time_str, "%H:%M").time()
-    end_time = datetime.datetime.strptime(end_time_str, "%H:%M").time()
+    start_time = datetime.strptime(start_time_str, "%H:%M").time()
+    end_time = datetime.strptime(end_time_str, "%H:%M").time()
 
     # 处理跨天情况（结束时间小于开始时间表示跨天）
     if end_time < start_time:
