@@ -15,6 +15,8 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
 
+from websocket import continuous_frame
+
 from .functions import rss_get
 from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger
 from .models import Detail
@@ -76,6 +78,31 @@ async def fetch_feed(url: str) -> dict:
         logger.opt(exception=False).error(f"RSS请求失败: {str(e)}")
         return {"error": f"获取内容失败: {str(e)}"}
 
+def is_current_time_in_period(start_time_str, end_time_str):
+    """
+    判断当前时间是否在指定的时间段内
+
+    Args:
+        start_time_str (str): 开始时间，格式为"HH:MM"或"HH:MM:SS"
+        end_time_str (str): 结束时间，格式为"HH:MM"或"HH:MM:SS"
+
+    Returns:
+        bool: 当前时间是否在时间段内
+    """
+    # 获取当前时间
+    now = datetime.datetime.now().time()
+
+    # 将字符串时间转换为time对象
+    start_time = datetime.datetime.strptime(start_time_str, "%H:%M").time()
+    end_time = datetime.datetime.strptime(end_time_str, "%H:%M").time()
+
+    # 处理跨天情况（结束时间小于开始时间表示跨天）
+    if end_time < start_time:
+        # 当前时间在开始时间之后或结束时间之前
+        return now >= start_time or now <= end_time
+    else:
+        # 当前时间在开始时间和结束时间之间
+        return start_time <= now <= end_time
 
 def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
@@ -641,42 +668,45 @@ async def auto_update_func():
     定时向订阅群组发送推文
     """
     logger.info(f"{datetime.now()} 开始处理订阅")
-    async with (get_session() as db_session):
-        try:
-            flag = await SubscribeManger.is_database_empty(db_session)
-            sub_list = {}
-            if flag:
-                logger.info("当前无订阅")
-            else:
-                all = await SubscribeManger.get_all_student_id(db_session)
-                for id in all:
-                    try:
-                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                        username = data1.username
-                        sub_list[username] = []
-                    except Exception as e:
-                        logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
-                logger.success(f"{datetime.now()} 已获取所有用户名")
-                for id in all:
-                    try:
-                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                        username = data1.username
-                        group = int(data1.group)
-                        sub_list.get(username).append(group)
-                    except Exception as e:
-                        logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
-                logger.success(f"{datetime.now()} 已获取所有群号")
-                for user in sub_list:
-                    try:
-                        logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
-                        await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
-                        time.sleep(1)
-                    except Exception as e:
-                        logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
+    if is_current_time_in_period("02:00", "08:00"):
+        logger.info("当前时间为休息时间，不处理推文")
+    else:
+        async with (get_session() as db_session):
+            try:
+                flag = await SubscribeManger.is_database_empty(db_session)
+                sub_list = {}
+                if flag:
+                    logger.info("当前无订阅")
+                else:
+                    all = await SubscribeManger.get_all_student_id(db_session)
+                    for id in all:
+                        try:
+                            data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                            username = data1.username
+                            sub_list[username] = []
+                        except Exception as e:
+                            logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
+                    logger.success(f"{datetime.now()} 已获取所有用户名")
+                    for id in all:
+                        try:
+                            data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                            username = data1.username
+                            group = int(data1.group)
+                            sub_list.get(username).append(group)
+                        except Exception as e:
+                            logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
+                    logger.success(f"{datetime.now()} 已获取所有群号")
+                    for user in sub_list:
+                        try:
+                            logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
+                            await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
+                            time.sleep(1)
+                        except Exception as e:
+                            logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
 
-            await rss_get().change_config()
-            logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
+                await rss_get().change_config()
+                logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
 
-            logger.info(f"{datetime.now()} 订阅处理完毕")
-        except SQLAlchemyError as e:
-            logger.opt(exception=False).error(f"数据库操作错误: {e}")
+                logger.info(f"{datetime.now()} 订阅处理完毕")
+            except SQLAlchemyError as e:
+                logger.opt(exception=False).error(f"数据库操作错误: {e}")
