@@ -668,7 +668,7 @@ async def auto_update_func():
     定时向订阅群组发送推文
     """
     logger.info(f"{datetime.now()} 开始处理订阅")
-    if not is_current_time_in_period("02:00", "08:00"):
+    if is_current_time_in_period("02:00", "08:00"):
         logger.info("当前时间为休息时间，不处理推文")
     else:
         async with (get_session() as db_session):
