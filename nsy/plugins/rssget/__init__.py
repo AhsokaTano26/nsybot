@@ -15,8 +15,6 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
 
-from websocket import continuous_frame
-
 from .functions import rss_get
 from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger
 from .models import Detail
