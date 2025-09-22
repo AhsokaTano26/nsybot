@@ -1,6 +1,5 @@
 from nonebot_plugin_orm import Model
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, Text, DateTime
 
 
 class Detail(Model):

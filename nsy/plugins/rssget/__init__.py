@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import time
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
-from nonebot import on_command, get_bot, require, Bot, get_plugin_config
+from nonebot import on_command, get_bot, require, get_plugin_config
 from nonebot.adapters.onebot.v11 import MessageSegment, Message, GroupMessageEvent, GROUP_ADMIN, GROUP_OWNER
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
@@ -20,7 +20,7 @@ from .models_method import DetailManger, SubscribeManger, UserManger, ContentMan
 from .models import Detail
 from .encrypt import encrypt
 from .update_text import update_text, get_text
-from .translation import BaiDu, Ollama
+from .translation import BaiDu, Ollama, Ali
 from .get_id import get_id
 from .config import Config
 
@@ -32,8 +32,11 @@ __plugin_meta__ = PluginMetadata(
     type="QQbot",
     homepage="https://github.com/your/repo",
 )
-B = BaiDu()  # 初始化翻译类
-#B = Ollama()
+
+B = Ali()     # 初始化阿里翻译类
+#B = BaiDu()  # 初始化百度翻译类
+#B = Ollama() # 初始化Ollama翻译类
+
 R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="INFO",rotation="10 MB", retention="10 days")

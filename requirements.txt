@@ -139,3 +139,6 @@ requests-toolbelt==1.0.0
 websockets==11.0.3
 websocket-client==1.8.0
 nonechat==0.3.0
+alibabacloud_credentials==1.0.2
+alibabacloud_tea_openapi==0.4.1
+alibabacloud_tea_util==0.3.13

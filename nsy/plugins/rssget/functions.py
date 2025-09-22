@@ -1,24 +1,21 @@
-import requests
-import json
 import feedparser
 import httpx
 from datetime import datetime, timedelta
 import time
 from bs4 import BeautifulSoup
-from nonebot import on_command, get_bot, require, Bot, get_plugin_config
-from nonebot.adapters.onebot.v11 import MessageSegment, Message
+from nonebot import get_bot, get_plugin_config
+from nonebot.adapters.onebot.v11 import MessageSegment
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
 
-from .encrypt import encrypt
 from .models_method import DetailManger, UserManger, ContentManger, PlantformManger
 from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
 from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
-from .translation import BaiDu, Ollama
+from .translation import BaiDu, Ollama, Ali
 from .config import Config
 
 
@@ -43,8 +40,11 @@ MODEL_NAME = os.getenv('MODEL_NAME')
 
 async def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
-    B = BaiDu()
-    #B = Ollama()
+
+    B = Ali()  # 初始化阿里翻译类
+    # B = BaiDu()  # 初始化百度翻译类
+    # B = Ollama() # 初始化Ollama翻译类
+
     publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
     # 增加指定小时
