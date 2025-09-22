@@ -246,11 +246,13 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             for index, img_url in enumerate(content["images"], 1):
                                 await send_onebot_image(img_url)
                     else:   #从RSSHUB获取信息
+                        logger.info(f"该 {trueid} 推文不存在")
                         content = extract_content(latest,if_need_trans)
                         content["username"] = username
                         content["id"] = trueid
                         await update_text(content)
                         # 构建文字消息
+                        logger.info(f"成功获取对于 {username} 的 {trueid} 推文")
                         msg = [
                             f"🐦 用户 {username} 最新动态",
                             f"⏰ {content['time']}",
