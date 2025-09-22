@@ -57,7 +57,7 @@ async def extract_content(entry,if_need_trans) -> dict:
     clean_text_old = await remove_html_tag_soup(entry.description)
     clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
     if if_need_trans == 1:
-        trans_text = BeautifulSoup(clean_text_old, "html.parser").get_text("+")
+        trans_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n") #为翻译段落划分
         trans_text1 = B.main(trans_text)
         trans_text = trans_text1.replace("+", "\n")
     else:

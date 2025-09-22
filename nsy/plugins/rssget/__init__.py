@@ -117,7 +117,7 @@ def extract_content(entry,if_need_trans) -> dict:
     # 清理文本内容
     clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
     if if_need_trans == 1:
-        trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("\n"))
+        trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("\n"))  #为翻译段落划分
         trans_text = trans_text1.replace("+", "\n")
     else:
         trans_text = None
@@ -215,11 +215,11 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             latest = data.entries[num]
             trueid = await get_id(latest)
             try:
-                print(1)
+
                 async with (get_session() as db_session):
                     existing_lanmsg = await ContentManger.get_Sign_by_student_id(
                         db_session, trueid)
-                    print(2)
+
                     if existing_lanmsg:  # 如有记录
                         logger.info(f"该 {trueid} 推文已存在")
                         content = await get_text(trueid)    #从本地数据库获取信息
@@ -230,7 +230,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             "\n📝 正文：",
                             content['text']
                         ]
-                        print(3)
+
                         if if_need_trans == 1:
                             trans_msg = [
                                 "📝 翻译：",
@@ -666,6 +666,54 @@ async def signal_on_():
 
 
 
+refresh = on_command("refresh", priority=10, permission=SUPERUSER,rule=ignore_group)
+@refresh.handle()
+async def refresh_():
+    """
+    刷新用推文
+    """
+    logger.info(f"{datetime.now()} 开始刷新推文")
+    async with (get_session() as db_session):
+        try:
+            flag = await SubscribeManger.is_database_empty(db_session)
+            sub_list = {}
+            if flag:
+                logger.info("当前无订阅")
+            else:
+                all = await SubscribeManger.get_all_student_id(db_session)
+                for id in all:
+                    try:
+                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                        username = data1.username
+                        sub_list[username] = []
+                    except Exception as e:
+                        logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
+                logger.success(f"{datetime.now()} 已获取所有用户名")
+                for id in all:
+                    try:
+                        data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
+                        username = data1.username
+                        group = int(data1.group)
+                        sub_list.get(username).append(group)
+                    except Exception as e:
+                        logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
+                logger.success(f"{datetime.now()} 已获取所有群号")
+                for user in sub_list:
+                    try:
+                        logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
+                        await R.handle_rss(userid=user, group_id_list=sub_list.get(user))
+                        time.sleep(1)
+                    except Exception as e:
+                        logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
+
+            await rss_get().change_config()
+            logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
+
+            logger.info(f"{datetime.now()} 订阅处理完毕")
+        except SQLAlchemyError as e:
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
+
+
 #定时任务，发送最新推文
 @scheduler.scheduled_job(CronTrigger(minute=f"*/{REFRESH_TIME}"),misfire_grace_time=60)
 async def auto_update_func():
@@ -676,42 +724,4 @@ async def auto_update_func():
     if is_current_time_in_period("02:00", "08:00"):
         logger.info("当前时间为休息时间，不处理推文")
     else:
-        async with (get_session() as db_session):
-            try:
-                flag = await SubscribeManger.is_database_empty(db_session)
-                sub_list = {}
-                if flag:
-                    logger.info("当前无订阅")
-                else:
-                    all = await SubscribeManger.get_all_student_id(db_session)
-                    for id in all:
-                        try:
-                            data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                            username = data1.username
-                            sub_list[username] = []
-                        except Exception as e:
-                            logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
-                    logger.success(f"{datetime.now()} 已获取所有用户名")
-                    for id in all:
-                        try:
-                            data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
-                            username = data1.username
-                            group = int(data1.group)
-                            sub_list.get(username).append(group)
-                        except Exception as e:
-                            logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
-                    logger.success(f"{datetime.now()} 已获取所有群号")
-                    for user in sub_list:
-                        try:
-                            logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
-                            await R.handle_rss(userid=user,group_id_list=sub_list.get(user))
-                            time.sleep(1)
-                        except Exception as e:
-                            logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
-
-                await rss_get().change_config()
-                logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
-
-                logger.info(f"{datetime.now()} 订阅处理完毕")
-            except SQLAlchemyError as e:
-                logger.opt(exception=False).error(f"数据库操作错误: {e}")
+        refresh_()
