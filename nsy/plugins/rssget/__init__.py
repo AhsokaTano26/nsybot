@@ -117,7 +117,7 @@ def extract_content(entry,if_need_trans) -> dict:
     # 清理文本内容
     clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
     if if_need_trans == 1:
-        trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("+"))
+        trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("\n"))
         trans_text = trans_text1.replace("+", "\n")
     else:
         trans_text = None
@@ -215,9 +215,11 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             latest = data.entries[num]
             trueid = await get_id(latest)
             try:
+                print(1)
                 async with (get_session() as db_session):
                     existing_lanmsg = await ContentManger.get_Sign_by_student_id(
                         db_session, trueid)
+                    print(2)
                     if existing_lanmsg:  # 如有记录
                         logger.info(f"该 {trueid} 推文已存在")
                         content = await get_text(trueid)    #从本地数据库获取信息
@@ -228,7 +230,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             "\n📝 正文：",
                             content['text']
                         ]
-
+                        print(3)
                         if if_need_trans == 1:
                             trans_msg = [
                                 "📝 翻译：",
