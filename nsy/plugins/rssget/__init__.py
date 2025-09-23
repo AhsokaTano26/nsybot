@@ -663,16 +663,7 @@ async def signal_on_():
     if_first_time_start = await rss_get().get_signal()
     await signal_on.finish(if_first_time_start)
 
-
-
-
-refresh = on_command("refresh", priority=10, permission=SUPERUSER,rule=ignore_group)
-@refresh.handle()
-async def refresh_():
-    """
-    刷新用推文
-    """
-    logger.info(f"{datetime.now()} 开始刷新推文")
+async def refresh_article():
     async with (get_session() as db_session):
         try:
             flag = await SubscribeManger.is_database_empty(db_session)
@@ -714,6 +705,20 @@ async def refresh_():
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
+refresh = on_command("refresh", priority=10, permission=SUPERUSER,rule=ignore_group)
+@refresh.handle()
+async def refresh_():
+    """
+    刷新用推文
+    """
+    start_time = datetime.now()
+    logger.info(f"{datetime.now()} 开始刷新推文")
+    await refresh_article()
+    end_time = datetime.now()
+    full_time = end_time - start_time
+    await refresh.finish(f"刷新完成,共用时{full_time}")
+
+
 #定时任务，发送最新推文
 @scheduler.scheduled_job(CronTrigger(minute=f"*/{REFRESH_TIME}"),misfire_grace_time=60)
 async def auto_update_func():
@@ -724,4 +729,4 @@ async def auto_update_func():
     if is_current_time_in_period("02:00", "08:00"):
         logger.info("当前时间为休息时间，不处理推文")
     else:
-        refresh_()
+        await refresh_article()
