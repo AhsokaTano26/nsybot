@@ -146,7 +146,7 @@ class rss_get():
                         if_is_self_trans: bool,
                         if_is_trans: bool
                         ):
-
+        logger.opt(exception=False).info(f"正在发送内容")
         async with (get_session() as db_session):
             bot = get_bot()
             if_need_trans = True if if_need_trans == 1 else False
@@ -165,6 +165,7 @@ class rss_get():
             except SQLAlchemyError:
                 logger.opt(exception=False).error(f"数据库错误")
                 return
+
             if not ((if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans)):
                 # 构建文字消息
                 msg = [
