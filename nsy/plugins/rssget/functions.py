@@ -157,11 +157,13 @@ class rss_get():
                     if_need_self_trans = group_config.if_need_self_trans
                     if_need_translate = group_config.if_need_translate
                     if_need_photo_num_mention = group_config.if_need_photo_num_mention
+                    logger.opt(exception=False).info(f"成功获取群组配置: {group_config}")
                 else:
                     if_need_user_trans = True
                     if_need_self_trans = False
                     if_need_translate = True
                     if_need_photo_num_mention = True
+                    logger.opt(exception=False).info(f"成功获取默认群组配置")
             except SQLAlchemyError:
                 logger.opt(exception=False).error(f"数据库错误")
                 return
