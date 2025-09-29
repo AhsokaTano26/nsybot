@@ -674,6 +674,19 @@ async def handle_rss(event: GroupMessageEvent):
     msg += "本项目已开源，欢迎star\n"
     msg += "项目地址：https://github.com/AhsokaTano26/nsybot"
 
+    new_msg = """
+V3.0更新
+命令：
+群组配置 &ensp;{if_need_trans} &ensp;{if_need_self_trans} &ensp;{if_need_translate} &ensp;{if_need_photo_num_mention}  
+命令示例：  
+群组配置 1 1 1 1  
+命令参数说明：  
+if_need_trans: 是否需要转发的推文，1为需要，0为不需要  
+if_need_self_trans: 是否需要自我转发的推文，1为需要，0为不需要  
+if_need_translate: 是否需要翻译，1为需要，0为不需要  
+if_need_photo_num_mention：是否需要提示图片个数，1为需要，0为不需要  
+若无参数，则默认为 1 0 1 1  
+"""
     try:
         with open('help.png', 'rb') as image_file:
             img = image_file.read()
@@ -684,6 +697,7 @@ async def handle_rss(event: GroupMessageEvent):
                     })
     except:
         await help.send(msg,end="")
+        await help.send(new_msg, end="")
 
 send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER,rule=ignore_group)
 @send_msg.handle()
