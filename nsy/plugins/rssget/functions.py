@@ -325,8 +325,6 @@ class rss_get():
 
                             except Exception as e:
                                 logger.opt(exception=False).error(f"处理 {latest.get('title')} 时发生错误: {e}")
-                            else:
-                                logger.info(f"该 {trueid} 推文为自我转发，不发送")
                         except Exception as e:
                             logger.opt(exception=False).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
                         time.sleep(0.1)
