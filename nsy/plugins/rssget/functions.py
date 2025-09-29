@@ -168,7 +168,7 @@ class rss_get():
                 logger.opt(exception=False).error(f"数据库错误")
                 return
 
-            if not ((if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans)):
+            if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
                 # 构建文字消息
                 msg = [
                     f"🐦 用户 {content["username"]} 最新动态",
