@@ -10,7 +10,7 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
 
-from .models_method import DetailManger, UserManger, ContentManger, PlantformManger
+from .models_method import DetailManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
 from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
@@ -30,11 +30,18 @@ async def User_name_get(id):
         return sheet1
 
 # 配置项（按需修改）
-RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://127.0.0.1:1200
+try:
+    RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://127.0.0.1:1200
+except:
+    RSSHUB_HOST = "https://rsshub.app"
+
+try:
+    MODEL_NAME = os.getenv('MODEL_NAME')
+except:
+    MODEL_NAME = "None"
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 config = get_plugin_config(Config)
-MODEL_NAME = os.getenv('MODEL_NAME')
 
 
 
@@ -132,11 +139,79 @@ class rss_get():
                     "message": f"意外错误|图片下载失败：{e} 已达到最大重试次数"
                 })
 
+    async def send_text(self,
+                        group_id: int,
+                        content: dict,
+                        if_need_trans: int,
+                        if_is_self_trans: bool,
+                        if_is_trans: bool
+                        ):
+
+        async with (get_session() as db_session):
+            bot = get_bot()
+            if_need_trans = True if if_need_trans == 1 else False
+            try:
+                group_config = await GroupconfigManger.get_Sign_by_group_id(db_session, group_id)
+                if group_config:
+                    if_need_user_trans = group_config.if_need_trans
+                    if_need_self_trans = group_config.if_need_self_trans
+                    if_need_translate = group_config.if_need_translate
+                    if_need_photo_num_mention = group_config.if_need_photo_num_mention
+                else:
+                    if_need_user_trans = True
+                    if_need_self_trans = False
+                    if_need_translate = True
+                    if_need_photo_num_mention = True
+            except SQLAlchemyError:
+                logger.opt(exception=False).error(f"数据库错误")
+                return
+            if not ((if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans)):
+                # 构建文字消息
+                msg = [
+                    f"🐦 用户 {content["username"]} 最新动态",
+                    f"⏰ {content['time']}",
+                    f"🔗 {content['link']}",
+                    "\n📝 正文：",
+                    content['text']
+                ]
+
+                await bot.call_api("send_group_msg", **{
+                    "group_id": group_id,
+                    "message": "\n".join(msg)
+                })
+
+                if if_need_trans and if_need_translate:
+                    trans_msg = [
+                        "📝 翻译：",
+                        content["trans_text"],
+                        f"【翻译由{MODEL_NAME}提供】"
+                    ]
+
+                    await bot.call_api("send_group_msg", **{
+                        "group_id": group_id,
+                        "message": "\n".join(trans_msg)
+                    })
+
+                logger.info("成功发送文字信息")
+
+                # 发送图片（单独处理）
+                if content["images"]:
+                    if if_need_photo_num_mention:
+                        await bot.call_api("send_group_msg", **{
+                            "group_id": group_id,
+                            "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                        })
+                    for index, img_url in enumerate(content["images"], 1):
+                        await self.send_onebot_image(img_url, group_id, num=0)
+
+                logger.info("成功发送图片信息")
+
+
+
     async def handle_rss(self,userid: str, group_id_list: list):
         """处理RSS推送"""
         async with (get_session() as db_session):
             sheet1 = await User_get()
-            bot = get_bot()
             if userid in sheet1:
                 plantform = await UserManger.get_Sign_by_student_id(db_session,userid)
                 plantform = plantform.Plantform
@@ -164,155 +239,92 @@ class rss_get():
                         try:
                             logger.info(f"正在处理 {group_id} 对 {userid} | {username}的订阅")
                             id_with_group = trueid + "-" + str(group_id)
-                            flag1 = await if_self_trans(username,latest)
-                            flag2 = await if_trans(latest)
-                            if flag1:
-                                try:
-                                    existing_lanmsg = await ContentManger.get_Sign_by_student_id(
-                                        db_session, trueid)
-                                    if existing_lanmsg:     #本地数据库是否有推文内容
-                                        logger.info(f"该 {trueid} 推文本地已存在")
-                                        content = await get_text(trueid)
-                                        try:
-                                            # 检查数据库中是否已存在该 id 的记录
-                                            existing_lanmsg = await DetailManger.get_Sign_by_student_id(
-                                                db_session, id_with_group)
-                                            if existing_lanmsg:  # 更新记录
-                                                logger.info(f"{id_with_group} 已发送")
-                                            else:
-                                                try:
-                                                    # 写入数据库
-                                                    await DetailManger.create_signmsg(
-                                                        db_session,
-                                                        id=id_with_group,
-                                                        summary=content['text'],
-                                                        updated=datetime.now(),
-                                                    )
-                                                    logger.info(f"创建数据: {content.get('id')}")
-                                                    if config.if_first_time_start:
-                                                        logger.info("第一次启动，跳过发送")
-                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
-                                                    else:
-                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
-                                                        # 构建文字消息
-                                                        msg = [
-                                                            f"🐦 用户 {content["username"]} 最新动态",
-                                                            f"⏰ {content['time']}",
-                                                            f"🔗 {content['link']}",
-                                                            "\n📝 正文：",
-                                                            content['text']
-                                                        ]
+                            if_is_self_trans = await if_self_trans(username,latest)
+                            if_is_trans = await if_trans(latest)
+                            try:
+                                existing_lanmsg = await ContentManger.get_Sign_by_student_id(
+                                    db_session, trueid)
+                                if existing_lanmsg:  # 本地数据库是否有推文内容
+                                    logger.info(f"该 {trueid} 推文本地已存在")
+                                    content = await get_text(trueid)
+                                    try:
+                                        # 检查数据库中是否已存在该 id 的记录
+                                        existing_lanmsg = await DetailManger.get_Sign_by_student_id(
+                                            db_session, id_with_group)
+                                        if existing_lanmsg:  # 更新记录
+                                            logger.info(f"{id_with_group} 已发送")
+                                        else:
+                                            try:
+                                                # 写入数据库
+                                                await DetailManger.create_signmsg(
+                                                    db_session,
+                                                    id=id_with_group,
+                                                    summary=content['text'],
+                                                    updated=datetime.now(),
+                                                )
+                                                logger.info(f"创建数据: {content.get('id')}")
+                                                if config.if_first_time_start:
+                                                    logger.info("第一次启动，跳过发送")
+                                                    logger.debug(f"if_first_time_start：{config.if_first_time_start}")
+                                                else:
+                                                    logger.debug(f"if_first_time_start：{config.if_first_time_start}")
 
-                                                        if if_need_trans == 1:
-                                                            trans_msg = [
-                                                                "📝 翻译：",
-                                                                content["trans_text"],
-                                                                f"【翻译由{MODEL_NAME}提供】"
-                                                            ]
+                                                    await self.send_text(group_id=group_id,
+                                                                         content=content,
+                                                                         if_need_trans=if_need_trans,
+                                                                         if_is_self_trans=if_is_self_trans,
+                                                                         if_is_trans=if_is_trans,
+                                                                         )
 
-                                                        # 先发送文字内容
-                                                        await bot.call_api("send_group_msg", **{
-                                                            "group_id": group_id,
-                                                            "message": "\n".join(msg)
-                                                        })
-                                                        if if_need_trans == 1:
-                                                            await bot.call_api("send_group_msg", **{
-                                                                "group_id": group_id,
-                                                                "message": "\n".join(trans_msg)
-                                                            })
+                                            except Exception as e:
+                                                logger.opt(exception=False).error(
+                                                    f"处理 {content.get('id')} 时发生错误: {e}")
+                                    except SQLAlchemyError as e:
+                                        logger.opt(exception=False).error(f"数据库操作错误: {e}")
+                                else:  # 本地数据库没有推文内容
+                                    logger.info(f"该 {trueid} 推文本地不存在")
+                                    try:
+                                        # 检查数据库中是否已存在该 id 的记录
+                                        existing_lanmsg = await DetailManger.get_Sign_by_student_id(
+                                            db_session, id_with_group)
+                                        if existing_lanmsg:  # 更新记录
+                                            logger.info(f"{id_with_group}已发送")
+                                        else:
+                                            content = await extract_content(latest, if_need_trans)
+                                            content["username"] = username
+                                            content["id"] = trueid
+                                            await update_text(content)
+                                            try:
+                                                # 写入数据库
+                                                await DetailManger.create_signmsg(
+                                                    db_session,
+                                                    id=id_with_group,
+                                                    summary=content['text'],
+                                                    updated=datetime.now(),
 
-                                                        logger.info("成功发送文字信息")
+                                                )
+                                                logger.info(f"创建数据: {content.get('id')}")
+                                                if config.if_first_time_start:
+                                                    logger.info("第一次启动，跳过发送")
+                                                    logger.debug(f"if_first_time_start：{config.if_first_time_start}")
+                                                else:
+                                                    logger.debug(f"if_first_time_start：{config.if_first_time_start}")
 
-                                                        # 发送图片（单独处理）
-                                                        if content["images"]:
-                                                            await bot.call_api("send_group_msg", **{
-                                                                "group_id": group_id,
-                                                                "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
-                                                            })
-                                                            for index, img_url in enumerate(content["images"], 1):
-                                                                await rss_get.send_onebot_image(self, img_url, group_id,num=0)
+                                                    await self.send_text(group_id=group_id,
+                                                                         content=content,
+                                                                         if_need_trans=if_need_trans,
+                                                                         if_is_self_trans=if_is_self_trans,
+                                                                         if_is_trans=if_is_trans,
+                                                                         )
 
-                                                        logger.info("成功发送图片信息")
+                                            except Exception as e:
+                                                logger.opt(exception=False).error(
+                                                    f"处理 {content.get('id')} 时发生错误: {e}")
+                                    except SQLAlchemyError as e:
+                                        logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
-                                                except Exception as e:
-                                                    logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
-                                        except SQLAlchemyError as e:
-                                            logger.opt(exception=False).error(f"数据库操作错误: {e}")
-                                    else:   #本地数据库没有推文内容
-                                        logger.info(f"该 {trueid} 推文本地不存在")
-                                        try:
-                                            # 检查数据库中是否已存在该 id 的记录
-                                            existing_lanmsg = await DetailManger.get_Sign_by_student_id(
-                                                db_session, id_with_group)
-                                            if existing_lanmsg:  # 更新记录
-                                                logger.info(f"{id_with_group}已发送")
-                                            else:
-                                                content = await extract_content(latest,if_need_trans)
-                                                content["username"] = username
-                                                content["id"] = trueid
-                                                await update_text(content)
-                                                try:
-                                                    # 写入数据库
-                                                    await DetailManger.create_signmsg(
-                                                        db_session,
-                                                        id=id_with_group,
-                                                        summary=content['text'],
-                                                        updated=datetime.now(),
-
-                                                    )
-                                                    logger.info(f"创建数据: {content.get('id')}")
-                                                    if config.if_first_time_start:
-                                                        logger.info("第一次启动，跳过发送")
-                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
-                                                    else:
-                                                        logger.debug(f"if_first_time_start：{config.if_first_time_start}")
-                                                        # 构建文字消息
-                                                        msg = [
-                                                            f"🐦 用户 {content["username"]} 最新动态",
-                                                            f"⏰ {content['time']}",
-                                                            f"🔗 {content['link']}",
-                                                            "\n📝 正文：",
-                                                            content['text']
-                                                        ]
-
-                                                        if if_need_trans == 1:
-                                                            trans_msg = [
-                                                                "📝 翻译：",
-                                                                content["trans_text"],
-                                                                f"【翻译由{MODEL_NAME}提供】"
-                                                            ]
-
-                                                        # 先发送文字内容
-                                                        await bot.call_api("send_group_msg", **{
-                                                            "group_id": group_id,
-                                                            "message": "\n".join(msg)
-                                                        })
-                                                        if if_need_trans == 1:
-                                                            await bot.call_api("send_group_msg", **{
-                                                                "group_id": group_id,
-                                                                "message": "\n".join(trans_msg)
-                                                            })
-
-                                                        logger.info("成功发送文字信息")
-
-                                                        # 发送图片（单独处理）
-                                                        if content["images"]:
-                                                            await bot.call_api("send_group_msg", **{
-                                                                "group_id": group_id,
-                                                                "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
-                                                            })
-                                                            for index, img_url in enumerate(content["images"], 1):
-                                                                await rss_get.send_onebot_image(self, img_url, group_id, num=0)
-
-                                                        logger.info("成功发送图片信息")
-
-                                                except Exception as e:
-                                                    logger.opt(exception=False).error(f"处理 {content.get('id')} 时发生错误: {e}")
-                                        except SQLAlchemyError as e:
-                                            logger.opt(exception=False).error(f"数据库操作错误: {e}")
-
-                                except Exception as e:
-                                    logger.opt(exception=False).error(f"处理 {latest.get('title')} 时发生错误: {e}")
+                            except Exception as e:
+                                logger.opt(exception=False).error(f"处理 {latest.get('title')} 时发生错误: {e}")
                             else:
                                 logger.info(f"该 {trueid} 推文为自我转发，不发送")
                         except Exception as e:

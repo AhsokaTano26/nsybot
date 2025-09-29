@@ -25,6 +25,18 @@
 > 用户列表：用户列表  
 > 查询群组订阅：查询 群组 {群组ID}  
 > 查询用户被订阅：查询 用户 {用户ID}  
+
+-V3.0更新
+> 命令：
+> 群组配置 &ensp;{if_need_trans} &ensp;{if_need_self_trans} &ensp;{if_need_translate} &ensp;{if_need_photo_num_mention}  
+> 命令示例：  
+> 群组配置 1 1 1 1  
+> 命令参数说明：  
+> if_need_trans: 是否需要转发的推文，1为需要，0为不需要  
+> if_need_self_trans: 是否需要自我转发的推文，1为需要，0为不需要  
+> if_need_translate: 是否需要翻译，1为需要，0为不需要  
+> if_need_photo_num_mention：是否需要提示图片个数，1为需要，0为不需要  
+> 若无参数，则默认为 1 0 1 1  
 ---
 ## 安装
 ##### 此bot支持Docker部署和本地部署，建议Docker部署

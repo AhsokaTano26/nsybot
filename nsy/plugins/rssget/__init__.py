@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 import os
 
 from .functions import rss_get
-from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger
+from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
 from .models import Detail
 from .encrypt import encrypt
 from .update_text import update_text, get_text
@@ -41,10 +41,22 @@ R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="INFO",rotation="10 MB", retention="10 days")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB")
-REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
-MODEL_NAME = os.getenv('MODEL_NAME')
-# 配置项（按需修改）
-RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://127.0.0.1:1200
+# 配置项
+try:
+    REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
+except:
+    REFRESH_TIME = 20
+
+try:
+    MODEL_NAME = os.getenv('MODEL_NAME')
+except:
+    MODEL_NAME = "None"
+
+try:
+    RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：https://rsshub.app
+except:
+    RSSHUB_HOST = "https://rsshub.app"
+
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 
@@ -591,6 +603,54 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             f"  标题  {content['title']}\n")
             await list.send(msg, end="")
 
+group_config = on_command("群组配置", priority=10,  permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN, rule=ignore_group)
+@group_config.handle()
+async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
+    command = args.extract_plain_text().strip()
+    group_id = event.group_id
+    try:
+        if_need_trans = True if int(command.split(" ")[0]) == 1 else False
+        if_need_self_trans = True if int(command.split(" ")[1]) == 1 else False
+        if_need_translate = True if int(command.split(" ")[2]) == 1 else False
+        if_need_photo_num_mention = True if int(command.split(" ")[3]) == 1 else False
+
+        async with (get_session() as db_session):
+            config_msg = await GroupconfigManger.get_Sign_by_group_id(db_session, group_id)
+            if not config_msg:
+                try:
+                    await GroupconfigManger.create_signmsg(
+                        db_session,
+                        group_id=group_id,
+                        if_need_trans=if_need_trans,
+                        if_need_self_trans=if_need_self_trans,
+                        if_need_translate=if_need_translate,
+                        if_need_photo_num_mention=if_need_photo_num_mention
+                    )
+                    await group_config.finish(f"创建群组 {group_id} 配置成功")
+                except SQLAlchemyError as e:
+                    logger.opt(exception=False).error(f"数据库操作错误: {e}")
+                    await group_config.finish(f"创建群组 {group_id} 配置失败")
+            else:
+                try:
+                    await GroupconfigManger.delete_id(db_session, group_id)
+                    await group_config.send(f"删除群组 {group_id} 配置成功")
+                    await GroupconfigManger.create_signmsg(
+                        db_session,
+                        group_id=group_id,
+                        if_need_trans=if_need_trans,
+                        if_need_self_trans=if_need_self_trans,
+                        if_need_translate=if_need_translate,
+                        if_need_photo_num_mention=if_need_photo_num_mention
+                    )
+                    await group_config.finish(f"创建群组 {group_id} 配置成功")
+                except SQLAlchemyError as e:
+                    logger.opt(exception=False).error(f"数据库操作错误: {e}")
+                    await group_config.finish(f"创建群组 {group_id} 配置失败")
+
+    except IndexError:
+        await group_config.finish("请输入正确的命令")
+
+
 help = on_command("/help", aliases={"/帮助"}, priority=10,rule=ignore_group & to_me())
 @help.handle()
 async def handle_rss(event: GroupMessageEvent):
@@ -726,6 +786,7 @@ async def auto_update_func():
     定时向订阅群组发送推文
     """
     logger.info(f"{datetime.now()} 开始处理订阅")
+    bot = get_bot()
     if is_current_time_in_period("02:00", "08:00"):
         logger.info("当前时间为休息时间，不处理推文")
     else:

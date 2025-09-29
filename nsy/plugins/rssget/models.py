@@ -1,5 +1,5 @@
 from nonebot_plugin_orm import Model
-from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy import Column, String, Text, DateTime, INT, BOOLEAN
 
 
 class Detail(Model):
@@ -37,3 +37,11 @@ class Content(Model):
     trans_text = Column(String(255), nullable=True)
     image_num = Column(String(255), nullable=True)
     images = Column(Text, nullable=True)
+
+class Groupconfig(Model):
+    __tablename__ = "Group_config"
+    group_id = Column(INT, primary_key=True, nullable=False)
+    if_need_trans = Column(BOOLEAN, nullable=False)
+    if_need_self_trans = Column(BOOLEAN, nullable=False)
+    if_need_translate = Column(BOOLEAN, nullable=False)
+    if_need_photo_num_mention = Column(BOOLEAN, nullable=False)
