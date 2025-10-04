@@ -155,7 +155,7 @@ class Ali:
 
 
 class DeepSeek:
-    def translate_text(self,text):
+    def main(self,text):
         client = OpenAI(
             api_key=os.getenv('API_KEY'),  # 环境变量引入 API Key
             base_url="https://api.deepseek.com"  # DeepSeek API 端点

@@ -40,8 +40,8 @@ B = DeepSeek()  # 初始化DeepSeek翻译类
 
 R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
-logger.add("data/log/info_log.txt", level="INFO",rotation="10 MB", retention="10 days")
-logger.add("data/log/error_log.txt", level="ERROR",rotation="10 MB")
+logger.add("data/log/info_log.txt", level="INFO",rotation="5 MB", retention="10 days")
+logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 # 配置项
 try:
     REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
