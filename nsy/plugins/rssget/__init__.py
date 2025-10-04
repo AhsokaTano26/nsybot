@@ -20,7 +20,7 @@ from .models_method import DetailManger, SubscribeManger, UserManger, ContentMan
 from .models import Detail
 from .encrypt import encrypt
 from .update_text import update_text, get_text
-from .translation import BaiDu, Ollama, Ali
+from .translation import BaiDu, Ollama, Ali, DeepSeek
 from .get_id import get_id
 from .config import Config
 
@@ -33,9 +33,10 @@ __plugin_meta__ = PluginMetadata(
     homepage="https://github.com/your/repo",
 )
 
-B = Ali()     # 初始化阿里翻译类
-#B = BaiDu()  # 初始化百度翻译类
-#B = Ollama() # 初始化Ollama翻译类
+B = DeepSeek()  # 初始化DeepSeek翻译类
+# B = Ali()     # 初始化阿里翻译类
+# B = BaiDu()  # 初始化百度翻译类
+# B = Ollama() # 初始化Ollama翻译类
 
 R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)

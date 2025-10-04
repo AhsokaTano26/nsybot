@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import re
+from openai import OpenAI
 
 from alibabacloud_tea_openapi.client import Client as OpenApiClient
 from alibabacloud_credentials.client import Client as CredentialClient
@@ -151,6 +152,31 @@ class Ali:
         # 返回值实际为 Map 类型，可从 Map 中获得三类数据：响应体 body、响应头 headers、HTTP 返回的状态码 statusCode。
         response = await client.call_api_async(params, request, runtime)
         return response['body']['Data']['Translated']
+
+
+class DeepSeek:
+    def translate_text(self,text):
+        client = OpenAI(
+            api_key=os.getenv('API_KEY'),  # 环境变量引入 API Key
+            base_url="https://api.deepseek.com"  # DeepSeek API 端点
+        )
+        response = client.chat.completions.create(
+            model="deepseek-chat",  # 指定使用的模型
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"你是一名专业的翻译助手，请将用户输入的内容准确翻译成中文，不要添加任何额外解释。"
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ],
+            stream=False
+        )
+        # 3. 提取并返回翻译结果
+        translated_text = response.choices[0].message.content
+        return translated_text
 
 
 

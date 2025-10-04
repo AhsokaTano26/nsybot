@@ -15,7 +15,7 @@ from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
 from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
-from .translation import BaiDu, Ollama, Ali
+from .translation import BaiDu, Ollama, Ali, DeepSeek
 from .config import Config
 
 
@@ -48,7 +48,8 @@ config = get_plugin_config(Config)
 async def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
 
-    B = Ali()  # 初始化阿里翻译类
+    B = DeepSeek()  # 初始化DeepSeek翻译类
+    # B = Ali()  # 初始化阿里翻译类
     # B = BaiDu()  # 初始化百度翻译类
     # B = Ollama() # 初始化Ollama翻译类
 
@@ -149,7 +150,7 @@ class rss_get():
         logger.opt(exception=False).info(f"正在发送内容")
         async with (get_session() as db_session):
             bot = get_bot()
-            if_need_trans = True if if_need_trans == 1 else False
+            if_need_trans = True if if_need_trans == 1 else False #文章来源平台是否需要翻译
             try:
                 group_config = await GroupconfigManger.get_Sign_by_group_id(db_session, group_id)
                 if group_config:
