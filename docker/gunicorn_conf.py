@@ -27,8 +27,8 @@ else:
     if use_max_workers:
         web_concurrency = min(web_concurrency, use_max_workers)
 
-graceful_timeout_str = os.getenv("GRACEFUL_TIMEOUT", "120")
-timeout_str = os.getenv("TIMEOUT", "120")
+graceful_timeout_str = os.getenv("GRACEFUL_TIMEOUT", "900")
+timeout_str = os.getenv("TIMEOUT", "900")
 keepalive_str = os.getenv("KEEP_ALIVE", "5")
 
 # Gunicorn config variables

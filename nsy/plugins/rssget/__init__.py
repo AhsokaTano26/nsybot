@@ -43,20 +43,9 @@ config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="INFO",rotation="5 MB", retention="10 days")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 # 配置项
-try:
-    REFRESH_TIME = int(os.getenv('REFRESH_TIME'))
-except:
-    REFRESH_TIME = 20
-
-try:
-    MODEL_NAME = os.getenv('MODEL_NAME')
-except:
-    MODEL_NAME = "None"
-
-try:
-    RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：https://rsshub.app
-except:
-    RSSHUB_HOST = "https://rsshub.app"
+REFRESH_TIME = int(os.getenv('REFRESH_TIME', 20))
+MODEL_NAME = os.getenv('MODEL_NAME', "None")
+RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址 例如：https://rsshub.app
 
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
@@ -675,10 +664,9 @@ async def handle_rss(event: GroupMessageEvent):
     msg += "本项目已开源，欢迎star\n"
     msg += "项目地址：https://github.com/AhsokaTano26/nsybot"
 
-    new_msg = """
-V3.0更新
+    new_msg = """V3.0更新
 命令：
-群组配置 &ensp;{if_need_trans} &ensp;{if_need_self_trans} &ensp;{if_need_translate} &ensp;{if_need_photo_num_mention}  
+群组配置 {if_need_trans} {if_need_self_trans} {if_need_translate} {if_need_photo_num_mention}  
 命令示例：  
 群组配置 1 1 1 1  
 命令参数说明：  

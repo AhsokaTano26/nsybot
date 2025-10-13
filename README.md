@@ -28,7 +28,7 @@
 
 -V3.0更新
 > 命令：
-> 群组配置 &ensp;{if_need_trans} &ensp;{if_need_self_trans} &ensp;{if_need_translate} &ensp;{if_need_photo_num_mention}  
+> 群组配置 g bv{if_need_trans} &ensp;{if_need_self_trans} &ensp;{if_need_translate} &ensp;{if_need_photo_num_mention}  
 > 命令示例：  
 > 群组配置 1 1 1 1  
 > 命令参数说明：  

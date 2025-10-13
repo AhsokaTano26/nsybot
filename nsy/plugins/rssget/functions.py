@@ -30,15 +30,8 @@ async def User_name_get(id):
         return sheet1
 
 # 配置项（按需修改）
-try:
-    RSSHUB_HOST = os.getenv('RSSHUB_HOST')  # RSSHub 实例地址 例如：http://127.0.0.1:1200
-except:
-    RSSHUB_HOST = "https://rsshub.app"
-
-try:
-    MODEL_NAME = os.getenv('MODEL_NAME')
-except:
-    MODEL_NAME = "None"
+RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址 例如：http://127.0.0.1:1200
+MODEL_NAME = os.getenv('MODEL_NAME', "None")
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 config = get_plugin_config(Config)
