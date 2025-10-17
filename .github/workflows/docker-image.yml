@@ -1,4 +1,4 @@
-name: Docker Image CI
+name: Docker 镜像 CI
 
 on:
   push:
@@ -36,6 +36,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            # 这一行显式添加 'latest' 标签。
+            # 'enable={{is_default}}' 确保它只在推送到默认分支 (main) 时才添加。
+            type=raw,value=latest,enable={{is_default}}
 
       - name: Build and Publish
         uses: docker/build-push-action@v4
