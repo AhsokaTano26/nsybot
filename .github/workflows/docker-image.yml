@@ -1,4 +1,5 @@
-name: Docker 镜像 CI
+name: Docker Image CI
+
 
 on:
   push:
@@ -27,6 +28,8 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Generate Tags
+        # 【重要修正】使用 'if' 条件，确保此步骤仅在推送到 'main' 分支时运行，避免了 'enable' 属性的错误。
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: docker/metadata-action@v4
         id: metadata
         with:
@@ -36,11 +39,12 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-            # 这一行显式添加 'latest' 标签。
-            # 'enable={{is_default}}' 确保它只在推送到默认分支 (main) 时才添加。
-            type=raw,value=latest,enable={{is_default}}
+            # 在此条件下，直接添加 'latest' 标签。
+            type=raw,value=latest 
 
       - name: Build and Publish
+        # 【重要修正】此条件确保只有在标签生成步骤成功运行时（即在 main 分支 push 时），才执行构建和推送。
+        if: steps.metadata.outputs.tags != ''
         uses: docker/build-push-action@v4
         with:
           context: .
