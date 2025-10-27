@@ -215,9 +215,9 @@ class rss_get():
         # --- 1. 准备节点内容 ---
 
         # 节点 1：原文
-        node1_content = msg
+        node1_content = MessageSegment.text(msg)
         # 节点 2：翻译
-        node2_content = trans_msg
+        node2_content = MessageSegment.text(trans_msg)
         # 节点3：图片
         message_segments: List[MessageSegment] = [
             MessageSegment.text("")
