@@ -666,15 +666,16 @@ async def handle_rss(event: GroupMessageEvent):
 
     new_msg = """V3.0更新
 命令：
-群组配置 {if_need_trans} {if_need_self_trans} {if_need_translate} {if_need_photo_num_mention}  
+群组配置 {a} {b} {c} {d} {e}  
 命令示例：  
-群组配置 1 1 1 1  
+群组配置 1 1 1 1 0
 命令参数说明：  
-if_need_trans: 是否需要转发的推文，1为需要，0为不需要  
-if_need_self_trans: 是否需要自我转发的推文，1为需要，0为不需要  
-if_need_translate: 是否需要翻译，1为需要，0为不需要  
-if_need_photo_num_mention：是否需要提示图片个数，1为需要，0为不需要  
-若无参数，则默认为 1 0 1 1  
+a: 是否需要转发的推文，1为需要，0为不需要  
+b: 是否需要自我转发的推文，1为需要，0为不需要  
+c: 是否需要翻译，1为需要，0为不需要  
+d：是否需要提示图片个数，1为需要，0为不需要  
+e：是否需要合并转发方式发送推文，1为需要，0为不需要
+若无参数，则默认为 1 0 1 1 0
 """
     try:
         with open('help.png', 'rb') as image_file:

@@ -182,47 +182,53 @@ class rss_get():
                 ]
 
                 if if_need_merged_message:
-                    await self.handle_merge_send(group_id=group_id, msg=msg, trans_msg=trans_msg, images=content["images"])
-
-                await bot.call_api("send_group_msg", **{
-                    "group_id": group_id,
-                    "message": "\n".join(msg)
-                })
-
-                if if_need_trans and if_need_translate:
-
+                    await self.handle_merge_send(group_id=group_id, msg=msg, trans_msg=trans_msg, content=content)
+                else:
                     await bot.call_api("send_group_msg", **{
                         "group_id": group_id,
-                        "message": "\n".join(trans_msg)
+                        "message": "\n".join(msg)
                     })
 
-                logger.info("成功发送文字信息")
+                    if if_need_trans and if_need_translate:
 
-                # 发送图片（单独处理）
-                if content["images"]:
-                    if if_need_photo_num_mention:
                         await bot.call_api("send_group_msg", **{
                             "group_id": group_id,
-                            "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                            "message": "\n".join(trans_msg)
                         })
-                    for index, img_url in enumerate(content["images"], 1):
-                        await self.send_onebot_image(img_url, group_id, num=0)
 
-                logger.info("成功发送图片信息")
+                    logger.info("成功发送文字信息")
 
-    async def handle_merge_send(self, group_id, msg, trans_msg, images):
+                    # 发送图片（单独处理）
+                    if content["images"]:
+                        if if_need_photo_num_mention:
+                            await bot.call_api("send_group_msg", **{
+                                "group_id": group_id,
+                                "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                            })
+                        for index, img_url in enumerate(content["images"], 1):
+                            await self.send_onebot_image(img_url, group_id, num=0)
+
+                    logger.info("成功发送图片信息")
+
+    async def handle_merge_send(self, group_id, msg, trans_msg, content):
         bot = get_bot()
         # --- 1. 准备节点内容 ---
-
+        SELF_ID = int(os.getenv('SELF_ID', "10001"))
         # 节点 1：原文
         node1_content = msg
         # 节点 2：翻译
         node2_content = trans_msg
         # 节点3：图片
-        message_segments: List[MessageSegment] = [
-            MessageSegment.text("")
-        ]
-        for index, img_url in enumerate(images, 1):
+        if content["images"]:
+            message_segments: List[MessageSegment] = [
+                MessageSegment.text("")
+            ]
+        else:
+            message_segments: List[MessageSegment] = [
+                MessageSegment.text("此推文无图片")
+            ]
+
+        for index, img_url in enumerate(content["images"], 1):
             # 添加图片消息段
             message_segments.append(
                 MessageSegment.image(img_url)
@@ -234,21 +240,21 @@ class rss_get():
 
         # 节点 1
         node1 = MessageSegment.node_custom(
-            user_id=10001,  # 虚拟发送者 ID
+            user_id=SELF_ID,  # 虚拟发送者 ID
             nickname="Ksm 初号机",  # 虚拟发送者昵称
             content=node1_content,
         )
 
         # 节点 2
         node2 = MessageSegment.node_custom(
-            user_id=10002,
+            user_id=SELF_ID,
             nickname="Ksm 初号机",
             content=node2_content,
         )
 
         # 节点 3
         node3 = MessageSegment.node_custom(
-            user_id=10003,
+            user_id=SELF_ID,
             nickname="Ksm 初号机",
             content=node3_content,
         )
