@@ -215,9 +215,9 @@ class rss_get():
         # --- 1. 准备节点内容 ---
         SELF_ID = int(os.getenv('SELF_ID', "10001"))
         # 节点 1：原文
-        node1_content = msg
+        node1_content = MessageSegment.text(msg)
         # 节点 2：翻译
-        node2_content = trans_msg
+        node2_content = MessageSegment.text(trans_msg)
         # 节点3：图片
         if content["images"]:
             message_segments: List[MessageSegment] = [
