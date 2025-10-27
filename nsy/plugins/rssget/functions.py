@@ -4,11 +4,12 @@ from datetime import datetime, timedelta
 import time
 from bs4 import BeautifulSoup
 from nonebot import get_bot, get_plugin_config
-from nonebot.adapters.onebot.v11 import MessageSegment
+from nonebot.adapters.onebot.v11 import MessageSegment, Message
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
+from typing import List
 
 from .models_method import DetailManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
 from .get_id import get_id
@@ -151,12 +152,14 @@ class rss_get():
                     if_need_self_trans = group_config.if_need_self_trans
                     if_need_translate = group_config.if_need_translate
                     if_need_photo_num_mention = group_config.if_need_photo_num_mention
+                    if_need_merged_message = group_config.if_need_merged_message
                     logger.opt(exception=False).info(f"成功获取群组配置: {group_config}")
                 else:
                     if_need_user_trans = True
                     if_need_self_trans = False
                     if_need_translate = True
                     if_need_photo_num_mention = True
+                    if_need_merged_message = False
                     logger.opt(exception=False).info(f"成功获取默认群组配置")
             except SQLAlchemyError:
                 logger.opt(exception=False).error(f"数据库错误")
@@ -172,17 +175,21 @@ class rss_get():
                     content['text']
                 ]
 
+                trans_msg = [
+                    "📝 翻译：",
+                    content["trans_text"],
+                    f"【翻译由{MODEL_NAME}提供】"
+                ]
+
+                if if_need_merged_message:
+                    await self.handle_merge_send(group_id=group_id, msg=msg, trans_msg=trans_msg, images=content["images"])
+
                 await bot.call_api("send_group_msg", **{
                     "group_id": group_id,
                     "message": "\n".join(msg)
                 })
 
                 if if_need_trans and if_need_translate:
-                    trans_msg = [
-                        "📝 翻译：",
-                        content["trans_text"],
-                        f"【翻译由{MODEL_NAME}提供】"
-                    ]
 
                     await bot.call_api("send_group_msg", **{
                         "group_id": group_id,
@@ -202,6 +209,64 @@ class rss_get():
                         await self.send_onebot_image(img_url, group_id, num=0)
 
                 logger.info("成功发送图片信息")
+
+    async def handle_merge_send(self, group_id, msg, trans_msg, images):
+        bot = get_bot()
+        # --- 1. 准备节点内容 ---
+
+        # 节点 1：原文
+        node1_content = msg
+        # 节点 2：翻译
+        node2_content = trans_msg
+        # 节点3：图片
+        message_segments: List[MessageSegment] = [
+            MessageSegment.text("")
+        ]
+        for index, img_url in enumerate(images, 1):
+            # 添加图片消息段
+            message_segments.append(
+                MessageSegment.image(img_url)
+            )
+        node3_content = Message(message_segments)
+
+        # --- 2. 构造自定义节点列表 ---
+
+
+        # 节点 1
+        node1 = MessageSegment.node_custom(
+            user_id=10001,  # 虚拟发送者 ID
+            nickname="Ksm 初号机",  # 虚拟发送者昵称
+            content=node1_content,
+        )
+
+        # 节点 2
+        node2 = MessageSegment.node_custom(
+            user_id=10002,
+            nickname="Ksm 初号机",
+            content=node2_content,
+        )
+
+        # 节点 3
+        node3 = MessageSegment.node_custom(
+            user_id=10003,
+            nickname="Ksm 初号机",
+            content=node3_content,
+        )
+
+        # 将所有节点放入一个列表中
+        forward_nodes = [node1, node2, node3]
+
+        # --- 3. 打包发送 ---
+
+        # 将节点列表转换为一个包含所有转发节点的 Message 对象
+        forward_message = Message(forward_nodes)
+
+        try:
+            # 发送合并打包消息
+            await bot.send_group_msg(group_id=group_id, message=forward_message)
+            logger.info(f"发送群 {group_id} 合并转发消息成功")
+        except Exception as e:
+            logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
 
 
 
