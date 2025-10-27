@@ -603,6 +603,7 @@ async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
         if_need_self_trans = True if int(command.split(" ")[1]) == 1 else False
         if_need_translate = True if int(command.split(" ")[2]) == 1 else False
         if_need_photo_num_mention = True if int(command.split(" ")[3]) == 1 else False
+        if_need_merged_message = True if int(command.split(" ")[4]) == 1 else False
 
         async with (get_session() as db_session):
             config_msg = await GroupconfigManger.get_Sign_by_group_id(db_session, group_id)
@@ -614,7 +615,8 @@ async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
                         if_need_trans=if_need_trans,
                         if_need_self_trans=if_need_self_trans,
                         if_need_translate=if_need_translate,
-                        if_need_photo_num_mention=if_need_photo_num_mention
+                        if_need_photo_num_mention=if_need_photo_num_mention,
+                        if_need_merged_message=if_need_merged_message
                     )
                     await group_config.finish(f"创建群组 {group_id} 配置成功")
                 except SQLAlchemyError as e:
@@ -630,7 +632,8 @@ async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
                         if_need_trans=if_need_trans,
                         if_need_self_trans=if_need_self_trans,
                         if_need_translate=if_need_translate,
-                        if_need_photo_num_mention=if_need_photo_num_mention
+                        if_need_photo_num_mention=if_need_photo_num_mention,
+                        if_need_merged_message=if_need_merged_message
                     )
                     await group_config.finish(f"创建群组 {group_id} 配置成功")
                 except SQLAlchemyError as e:
