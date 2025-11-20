@@ -14,6 +14,7 @@ from nonebot.rule import to_me
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
+import requests
 
 from .functions import rss_get
 from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
@@ -46,6 +47,7 @@ logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 REFRESH_TIME = int(os.getenv('REFRESH_TIME', 20))
 MODEL_NAME = os.getenv('MODEL_NAME', "None")
 RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址 例如：https://rsshub.app
+UT_URL = os.getenv('UT_URL', "None")
 
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
@@ -762,6 +764,10 @@ async def refresh_article():
                         await R.handle_rss(userid=user, group_id_list=sub_list.get(user))
                         time.sleep(1)
                     except Exception as e:
+                        try:
+                            requests.get(UT_URL)
+                        except:
+                            logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
                         logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
 
             await rss_get().change_config()
