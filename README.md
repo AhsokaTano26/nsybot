@@ -53,6 +53,7 @@
 >   - 例：  
 >   ![这是图片](/docs/img.png "Magic Gardens")  
 > 其中 ***name*** 为平台名，***url*** 为Rsshub路由文档所给出的前缀地址，***need_trans*** 为是否需要翻译，1为需要，0为不需要
+>   - 提供百度机器翻译、阿里机器翻译、Deepseek翻译类，可自行调用，默认为Deepseek翻译
 ### 本地部署
 >本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)  
 - 将本项目克隆到本地，即可使用，但请注意，需要在项目根文件夹下 ***data*** 文件夹下创建 ***db.sqlite3*** 文件，并提前写入平台数据  
