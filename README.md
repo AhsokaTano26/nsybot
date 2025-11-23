@@ -48,7 +48,7 @@
  >   - 默认端口为12035
 >   - 请于Docker容器的环境变量中给出 ***API_KEY*** 和 ***SECRET_KEY*** 为百度翻译API_KEY和SECRET_KEY  
 >   - 请于Docker容器的环境变量中给出 ***REFRESH_TIME*** 作为更新周期（单位为分钟）
->   - 请于Docker容器的环境变量中给出 ***RSSHUB_HOST*** 作为RSSHub 实例地址 例如：RSSHUB_HOST=http://127.0.0.1:1200
+>   - 请于Docker容器的环境变量中给出 ***RSSHUB_HOST*** 作为RSSHub 实例地址 默认为 https://rsshub.app
 >   - 目前bot支持多平台订阅（例如：twitter、bilibili等），但需要在sqlite数据库Plantform表中手动添加  
 >   - 例：  
 >   ![这是图片](/docs/img.png "Magic Gardens")  
