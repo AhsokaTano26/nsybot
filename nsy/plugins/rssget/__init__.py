@@ -668,8 +668,9 @@ async def handle_rss(event: GroupMessageEvent):
     msg += "查询用户被订阅：查询 用户 {用户ID} \n"
     msg += "本项目已开源，欢迎star\n"
     msg += "项目地址：https://github.com/AhsokaTano26/nsybot"
+    node1 = msg
 
-    new_msg = """V3.0更新
+    node2 = """V3.0更新
 命令：
 群组配置 {a} {b} {c} {d} {e}  
 命令示例：  
@@ -682,17 +683,18 @@ d：是否需要提示图片个数，1为需要，0为不需要
 e：是否需要合并转发方式发送推文，1为需要，0为不需要
 若无参数，则默认为 1 0 1 1 0
 """
+    forward_message_nodes = [node1, node2]
     try:
-        with open('help.png', 'rb') as image_file:
-            img = image_file.read()
-            image_seg = MessageSegment.image(img)
-            await bot.call_api("send_group_msg", **{
-                        "group_id": group_id,
-                        "message": image_seg
-                    })
-    except:
-        await help.send(msg,end="")
-        await help.send(new_msg, end="")
+        # 使用 bot.call_api 直接调用 OneBot V11 的 send_group_forward_msg API
+        result = await bot.call_api(
+            "send_group_forward_msg",
+            group_id=group_id,
+            messages=forward_message_nodes
+        )
+
+        logger.info("合并转发消息发送成功！API 结果：{result}")
+    except Exception as e:
+        logger.error(f"发送合并转发消息失败！错误：{type(e).__name__}: {e}")
 
 send_msg = on_command("/send", aliases={"/发送"}, priority=10, permission=SUPERUSER,rule=ignore_group)
 @send_msg.handle()
