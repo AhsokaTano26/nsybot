@@ -654,7 +654,8 @@ async def handle_rss(event: GroupMessageEvent):
     """
     bot = get_bot()
     group_id = event.group_id
-    node1 = Message("📋 nsy推文转发bot命令帮助：\n"
+    SELF_ID = int(os.getenv('SELF_ID', "10001"))
+    node1_content = Message("📋 nsy推文转发bot命令帮助：\n"
                     "注：{}内的内容为发起请求时填写内容 \n"
                     "推文查看: rss {用户名} {文章序列号(不填默认为0，即最新文章)}\n"
                     "订阅列表：订阅列表\n"
@@ -668,8 +669,13 @@ async def handle_rss(event: GroupMessageEvent):
                     "查询用户被订阅：查询 用户 {用户ID} \n"
                     "本项目已开源，欢迎star\n"
                     "项目地址：https://github.com/AhsokaTano26/nsybot")
+    node1 = MessageSegment.node_custom(
+        user_id=SELF_ID,
+        nickname="Ksm 初号机",
+        content=node1_content,
+    )
 
-    node2 = Message("V3.0更新 \n\
+    node2_content = Message("V3.0更新 \n\
                 命令：\n\
                 群组配置 {a} {b} {c} {d} {e} \n\
                 命令示例：  \n\
@@ -681,6 +687,12 @@ async def handle_rss(event: GroupMessageEvent):
                 d：是否需要提示图片个数，1为需要，0为不需要 \n\
                 e：是否需要合并转发方式发送推文，1为需要，0为不需要 \n\
                 若无参数，则默认为 1 0 1 1 0 ")
+    node2 = MessageSegment.node_custom(
+        user_id=SELF_ID,
+        nickname="Ksm 初号机",
+        content=node2_content,  # content 是一个 Message 对象
+    )
+
     forward_message_nodes = [node1, node2]
     try:
         # 使用 bot.call_api 直接调用 OneBot V11 的 send_group_forward_msg API
