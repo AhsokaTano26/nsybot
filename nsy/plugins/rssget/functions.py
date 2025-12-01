@@ -1,4 +1,5 @@
 import feedparser
+import requests
 import httpx
 from datetime import datetime, timedelta
 import time
@@ -33,6 +34,7 @@ async def User_name_get(id):
 # 配置项（按需修改）
 RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址 例如：http://127.0.0.1:1200
 MODEL_NAME = os.getenv('MODEL_NAME', "None")
+UT_URL = os.getenv('UT_URL', "None")
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 config = get_plugin_config(Config)
@@ -296,7 +298,20 @@ class rss_get():
                     logger.opt(exception=False).error(data["error"])
 
                 if not data.get("entries"):
-                    logger.info("该用户暂无动态或不存在")
+                    logger.error("该用户暂无动态或不存在")
+                    try:
+                        requests.get(UT_URL)
+                    except Exception as e:
+                        logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
+                    return
+
+                if len(data.get("entries")) == 0:
+                    logger.error("该用户暂无动态或不存在")
+                    try:
+                        requests.get(UT_URL)
+                    except Exception as e:
+                        logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
+                    return
 
                 # 处理最新五条推文
                 for data_number in range(0,3):
@@ -396,7 +411,9 @@ class rss_get():
                         except Exception as e:
                             logger.opt(exception=False).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
                         time.sleep(0.1)
+
     async def change_config(self):
         config.if_first_time_start = False
+
     async def get_signal(self):
         return str(config.if_first_time_start)

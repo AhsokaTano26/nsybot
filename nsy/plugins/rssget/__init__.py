@@ -14,7 +14,6 @@ from nonebot.rule import to_me
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 import os
-import requests
 
 from .functions import rss_get
 from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
@@ -47,7 +46,7 @@ logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 REFRESH_TIME = int(os.getenv('REFRESH_TIME', 20))
 MODEL_NAME = os.getenv('MODEL_NAME', "None")
 RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址 例如：https://rsshub.app
-UT_URL = os.getenv('UT_URL', "None")
+
 
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
@@ -761,6 +760,7 @@ async def refresh_article():
                     except Exception as e:
                         logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
                 logger.success(f"{datetime.now()} 已获取所有用户名")
+
                 for id in all:
                     try:
                         data1 = await SubscribeManger.get_Sign_by_student_id(db_session, id)
@@ -770,16 +770,13 @@ async def refresh_article():
                     except Exception as e:
                         logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
                 logger.success(f"{datetime.now()} 已获取所有群号")
+
                 for user in sub_list:
                     try:
                         logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
                         await R.handle_rss(userid=user, group_id_list=sub_list.get(user))
                         time.sleep(1)
                     except Exception as e:
-                        try:
-                            requests.get(UT_URL)
-                        except:
-                            logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
                         logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
 
             await rss_get().change_config()
@@ -811,7 +808,11 @@ async def auto_update_func():
     定时向订阅群组发送推文
     """
     logger.info(f"{datetime.now()} 开始处理订阅")
-    bot = get_bot()
+    try:
+        bot = get_bot()
+    except Exception as e:
+        logger.opt(exception=False).error(f"获取bot时发生错误: {e}")
+
     if is_current_time_in_period("02:00", "08:00"):
         logger.info("当前时间为休息时间，不处理推文")
     else:
