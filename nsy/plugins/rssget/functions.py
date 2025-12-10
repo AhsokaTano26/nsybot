@@ -242,8 +242,8 @@ class rss_get():
 
         # 节点 1
         node1 = MessageSegment.node_custom(
-            user_id=SELF_ID,  # 虚拟发送者 ID
-            nickname="Ksm 初号机",  # 虚拟发送者昵称
+            user_id=SELF_ID,
+            nickname="Ksm 初号机",
             content=node1_content,
         )
 

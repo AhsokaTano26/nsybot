@@ -286,8 +286,8 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                 logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER |GROUP_ADMIN,rule=ignore_group)
-rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN,rule=ignore_group)
+rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,rule=ignore_group)
+rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,rule=ignore_group)
 rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,rule=ignore_group)
 
 @rss_sub.handle()
@@ -360,8 +360,12 @@ async def handle_rss(args: Message = CommandArg()):
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 @rss_list.handle()
-async def handle_rss(args: Message = CommandArg()):
+async def handle_rss(event: GroupMessageEvent):
     async with (get_session() as db_session):
+        bot = get_bot()
+        group_id = event.group_id
+        SELF_ID = int(os.getenv('SELF_ID', "10001"))
+
         msg = "📋 当前订阅列表：\n"
         sub_list = {}
         try:
@@ -376,7 +380,7 @@ async def handle_rss(args: Message = CommandArg()):
                         username = data1.username
                         sub_list[username] = []
                     except Exception as e:
-                        logger.opt(exception=False).error(f"对于{username}的订阅时发生错误: {e}")
+                        logger.opt(exception=False).error(f"获取对于{username}的订阅信息时发生错误: {e}")
                 logger.success("已获取所有用户名")
                 for id in all:
                     try:
@@ -385,17 +389,36 @@ async def handle_rss(args: Message = CommandArg()):
                         group = int(data1.group)
                         sub_list.get(username).append(group)
                     except Exception as e:
-                        logger.opt(exception=False).error(f"群{group}对于{username}的订阅时发生错误: {e}")
+                        logger.opt(exception=False).error(f"获取群{group}对于{username}的订阅信息时发生错误: {e}")
                 logger.success("已获取所有群号")
                 for user in sub_list:
+                    msg += "\n"
                     user_datil = await UserManger.get_Sign_by_student_id(db_session, user)
                     user_name = user_datil.User_Name
                     msg += f"用户ID: {user}\n"
                     msg += f"用户名: {user_name}\n"
                     for group in sub_list[user]:
                         msg += f"    推送群组: {group}\n"
-                    msg += "\n"
-                await rss_unsub.send(msg,end="")
+
+                node1_content = msg
+                node1 = MessageSegment.node_custom(
+                    user_id=SELF_ID,
+                    nickname="Ksm 初号机",
+                    content=node1_content,
+                )
+
+                forward_nodes = [node1]
+
+                # 将节点列表转换为一个包含所有转发节点的 Message 对象
+                forward_message = Message(forward_nodes)
+
+                try:
+                    # 发送合并打包消息
+                    await bot.send_group_msg(group_id=group_id, message=forward_message)
+                    logger.info(f"发送群 {group_id} 合并转发消息成功")
+                except Exception as e:
+                    logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
+
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
@@ -477,11 +500,14 @@ async def handle_rss(args: Message = CommandArg()):
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 @user_list.handle()
-async def handle_rss(args: Message = CommandArg()):
+async def handle_rss(event: GroupMessageEvent):
     """
     查询当前可访问用户列表
     """
     async with (get_session() as db_session):
+        bot = get_bot()
+        group_id = event.group_id
+        SELF_ID = int(os.getenv('SELF_ID', "10001"))
         msg = "📋 当前可访问用户列表：\n"
         try:
             flag = await UserManger.is_database_empty(db_session)
@@ -495,7 +521,33 @@ async def handle_rss(args: Message = CommandArg()):
                     user_id = data1.User_Name
                     msg += f"用户名: {username}\n"
                     msg += f" 用户ID: {user_id}\n"
-                await rss_unsub.send(msg,end="")
+
+                node1_content = msg
+                node1 = MessageSegment.node_custom(
+                    user_id=SELF_ID,
+                    nickname="Ksm 初号机",
+                    content=node1_content,
+                )
+
+                node2_content = "如需增加新用户，请联系管理员，或发邮件至：public@tano.asia"
+                node2 = MessageSegment.node_custom(
+                    user_id=SELF_ID,
+                    nickname="Ksm 初号机",
+                    content=node2_content,
+                )
+
+                forward_nodes = [node1, node2]
+
+                # 将节点列表转换为一个包含所有转发节点的 Message 对象
+                forward_message = Message(forward_nodes)
+
+                try:
+                    # 发送合并打包消息
+                    await bot.send_group_msg(group_id=group_id, message=forward_message)
+                    logger.info(f"发送群 {group_id} 合并转发消息成功")
+                except Exception as e:
+                    logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
+
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
@@ -553,7 +605,9 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     查询用户文章列表
     """
     logger.info(f"从群 {event.group_id} 发起List请求")
-
+    bot = get_bot()
+    group_id = event.group_id
+    SELF_ID = int(os.getenv('SELF_ID', "10001"))
     userid = args.extract_plain_text().strip()
     sheet1 = await User_get()
     if not userid:
@@ -592,9 +646,27 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                 else:
                     msg += (f"\n序号  {i}\n"
                             f"  标题  {content['title']}\n")
-            await list.send(msg, end="")
 
-group_config = on_command("群组配置", priority=10,  permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN, rule=ignore_group)
+            node1_content = msg
+            node1 = MessageSegment.node_custom(
+                user_id=SELF_ID,
+                nickname="Ksm 初号机",
+                content=node1_content,
+            )
+
+            forward_nodes = [node1]
+
+            # 将节点列表转换为一个包含所有转发节点的 Message 对象
+            forward_message = Message(forward_nodes)
+
+            try:
+                # 发送合并打包消息
+                await bot.send_group_msg(group_id=group_id, message=forward_message)
+                logger.info(f"发送群 {group_id} 合并转发消息成功")
+            except Exception as e:
+                logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
+
+group_config = on_command("群组配置", priority=10,  permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN, rule=ignore_group)
 @group_config.handle()
 async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
@@ -674,18 +746,18 @@ async def handle_rss(event: GroupMessageEvent):
         content=node1_content,
     )
 
-    node2_content = Message("V3.0更新 \n\
-                命令：\n\
-                群组配置 {a} {b} {c} {d} {e} \n\
-                命令示例：  \n\
-                群组配置 1 1 1 1 0 \n\
-                命令参数说明：  \n\
-                a: 是否需要转发的推文，1为需要，0为不需要  \n\
-                b: 是否需要自我转发的推文，1为需要，0为不需要  \n\
-                c: 是否需要翻译，1为需要，0为不需要 \n\
-                d：是否需要提示图片个数，1为需要，0为不需要 \n\
-                e：是否需要合并转发方式发送推文，1为需要，0为不需要 \n\
-                若无参数，则默认为 1 0 1 1 0 ")
+    node2_content = Message("V3.0.0更新 \n"
+                            "命令：\n"
+                            "群组配置 {a} {b} {c} {d} {e} \n"
+                            "命令示例：  \n"
+                            "群组配置 1 1 1 1 0 \n"
+                            "命令参数说明：  \n"
+                            "a: 是否需要转发的推文，1为需要，0为不需要  \n"
+                            "b: 是否需要自我转发的推文，1为需要，0为不需要  \n"
+                            "c: 是否需要翻译，1为需要，0为不需要 \n"
+                            "d：是否需要提示图片个数，1为需要，0为不需要 \n"
+                            "e：是否需要合并转发方式发送推文，1为需要，0为不需要 \n"
+                            "若无参数，则默认为 1 0 1 1 0 ")
     node2 = MessageSegment.node_custom(
         user_id=SELF_ID,
         nickname="Ksm 初号机",
@@ -712,7 +784,7 @@ async def handle_rss(args: Message = CommandArg()):
     向所有订阅群组发送通知
     """
     command = args.extract_plain_text().strip()
-    msg = str(command.split("@")[0])
+    msg = str(command.split("*")[0])
     group_list = []
     async with (get_session() as db_session):
         try:
@@ -787,7 +859,7 @@ async def refresh_article():
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-refresh = on_command("refresh", priority=10, permission=SUPERUSER,rule=ignore_group)
+refresh = on_command("refresh", priority=10, permission=SUPERUSER, rule=ignore_group)
 @refresh.handle()
 async def refresh_():
     """
