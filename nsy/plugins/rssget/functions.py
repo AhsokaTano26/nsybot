@@ -170,15 +170,15 @@ class rss_get():
             if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
                 # 构建文字消息
                 msg = [
-                    f"🐦 用户 {content["username"]} 最新动态\n",
-                    f"⏰ {content['time']}\n",
-                    f"🔗 {content['link']}\n",
-                    "\n📝 正文：",
-                    content['text']
+                    f"🐦 用户 {content["username"]} 最新动态"
+                    f"⏰ {content['time']}"
+                    f"🔗 {content['link']}"
+                    "\n📝 正文："
+                    f"{content['text']}"
                 ]
 
                 trans_msg = [
-                    content["trans_text"],
+                    f"{content["trans_text"]}"
                     f"【翻译由{MODEL_NAME}提供】"
                 ]
 
@@ -216,9 +216,9 @@ class rss_get():
         # --- 1. 准备节点内容 ---
         SELF_ID = int(os.getenv('SELF_ID', "10001"))
         # 节点 1：原文
-        node1_content = MessageSegment.text(msg)
+        node1_content = msg
         # 节点 2：翻译
-        node2_content = MessageSegment.text(trans_msg)
+        node2_content = trans_msg
         # 节点3：图片
         if content["images"]:
             message_segments: List[MessageSegment] = [
@@ -237,8 +237,6 @@ class rss_get():
         node3_content = Message(message_segments)
 
         # --- 2. 构造自定义节点列表 ---
-
-
         # 节点 1
         node1 = MessageSegment.node_custom(
             user_id=SELF_ID,
@@ -264,7 +262,6 @@ class rss_get():
         forward_nodes = [node1, node2, node3]
 
         # --- 3. 打包发送 ---
-
         # 将节点列表转换为一个包含所有转发节点的 Message 对象
         forward_message = Message(forward_nodes)
 
