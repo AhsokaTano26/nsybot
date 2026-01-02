@@ -31,8 +31,8 @@ async def User_name_get(id):
         sheet1 = await UserManger.get_Sign_by_student_id(db_session,id)
         return sheet1
 
-# 配置项（按需修改）
-RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址 例如：http://127.0.0.1:1200
+# 配置项
+RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址
 MODEL_NAME = os.getenv('MODEL_NAME', "None")
 UT_URL = os.getenv('UT_URL', "None")
 TIMEOUT = 30  # 请求超时时间
@@ -170,15 +170,14 @@ class rss_get():
             if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
                 # 构建文字消息
                 msg = [
-                    f"🐦 用户 {content["username"]} 最新动态",
-                    f"⏰ {content['time']}",
-                    f"🔗 {content['link']}",
+                    f"🐦 用户 {content["username"]} 最新动态\n",
+                    f"⏰ {content['time']}\n",
+                    f"🔗 {content['link']}\n",
                     "\n📝 正文：",
                     content['text']
                 ]
 
                 trans_msg = [
-                    "📝 翻译：",
                     content["trans_text"],
                     f"【翻译由{MODEL_NAME}提供】"
                 ]
@@ -393,12 +392,13 @@ class rss_get():
                                                 else:
                                                     logger.debug(f"if_first_time_start：{config.if_first_time_start}")
 
-                                                    await self.send_text(group_id=group_id,
-                                                                         content=content,
-                                                                         if_need_trans=if_need_trans,
-                                                                         if_is_self_trans=if_is_self_trans,
-                                                                         if_is_trans=if_is_trans,
-                                                                         )
+                                                    await self.send_text(
+                                                        group_id=group_id,
+                                                        content=content,
+                                                        if_need_trans=if_need_trans,
+                                                        if_is_self_trans=if_is_self_trans,
+                                                        if_is_trans=if_is_trans,
+                                                    )
 
                                             except Exception as e:
                                                 logger.opt(exception=False).error(

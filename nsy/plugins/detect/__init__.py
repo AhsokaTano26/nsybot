@@ -40,6 +40,7 @@ async def detect():
         # 处理 API 调用失败的情况（例如连接已断开）
         logger.error(f"❌ 无法获取 Bot 状态，可能已下线或出现连接错误: {e}")
 
+
 driver = get_driver()
 @driver.on_bot_connect
 async def handle_bot_connect(bot):

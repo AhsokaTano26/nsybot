@@ -28,7 +28,6 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Generate Tags
-        # 【重要修正】使用 'if' 条件，确保此步骤仅在推送到 'main' 分支时运行，避免了 'enable' 属性的错误。
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: docker/metadata-action@v4
         id: metadata
