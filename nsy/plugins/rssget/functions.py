@@ -170,8 +170,8 @@ class rss_get():
             if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
                 # 构建文字消息
                 msg = [
-                    f"🐦 用户 {content["username"]} 最新动态"
-                    f"⏰ {content['time']}"
+                    f"🐦 用户 {content["username"]} 最新动态\n"
+                    f"⏰ {content['time']}\n"
                     f"🔗 {content['link']}"
                     "\n📝 正文："
                     f"{content['text']}"
@@ -216,9 +216,9 @@ class rss_get():
         # --- 1. 准备节点内容 ---
         SELF_ID = int(os.getenv('SELF_ID', "10001"))
         # 节点 1：原文
-        node1_content = msg
+        node1_content = MessageSegment.text(msg)
         # 节点 2：翻译
-        node2_content = trans_msg
+        node2_content = MessageSegment.text(trans_msg)
         # 节点3：图片
         if content["images"]:
             message_segments: List[MessageSegment] = [
