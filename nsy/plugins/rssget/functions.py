@@ -179,7 +179,7 @@ class rss_get():
 
                 trans_msg = [
                     f"{content["trans_text"]}"
-                    f"【翻译由{MODEL_NAME}提供】"
+                    f"\n【翻译由{MODEL_NAME}提供】"
                 ]
 
                 if if_need_merged_message:
