@@ -85,11 +85,11 @@ async def extract_content(entry,if_need_trans) -> dict:
             images.append(img['src'])
 
     return {
-        "title": entry.title,
-        "time": published,
-        "link": entry.link,
-        "text": clean_text,
-        "trans_text": trans_text,
+        "title": entry.title or None,
+        "time": published or None,
+        "link": entry.link or None,
+        "text": clean_text or None,
+        "trans_text": trans_text or None,
         "images": images[:MAX_IMAGES]
     }
 
@@ -133,7 +133,7 @@ class rss_get():
             else:
                 await bot.call_api("send_group_msg", **{
                     "group_id": group_id,
-                    "message": f"意外错误|图片下载失败：{e} 已达到最大重试次数"
+                    "message": f"意外错误|图片下载失败：{e} \n已达到最大重试次数"
                 })
 
     async def send_text(self,
@@ -162,10 +162,15 @@ class rss_get():
                     if_need_translate = True
                     if_need_photo_num_mention = True
                     if_need_merged_message = False
-                    logger.opt(exception=False).info(f"成功获取默认群组配置")
+                    logger.opt(exception=False).info(f"使用默认群组配置")
             except SQLAlchemyError:
                 logger.opt(exception=False).error(f"数据库错误")
-                return
+                if_need_user_trans = True
+                if_need_self_trans = False
+                if_need_translate = True
+                if_need_photo_num_mention = True
+                if_need_merged_message = False
+                logger.opt(exception=False).info(f"使用默认群组配置")
 
             if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
                 # 构建文字消息
@@ -211,55 +216,51 @@ class rss_get():
 
                     logger.info("成功发送图片信息")
 
-    async def handle_merge_send(self, group_id, msg, trans_msg, content):
+    @staticmethod
+    async def handle_merge_send(group_id, msg, trans_msg, content):
         bot = get_bot()
         # --- 1. 准备节点内容 ---
         SELF_ID = int(os.getenv('SELF_ID', "10001"))
+
+        forward_nodes = []
+
         # 节点 1：原文
         node1_content = MessageSegment.text(msg)
-        # 节点 2：翻译
-        node2_content = MessageSegment.text(trans_msg)
-        # 节点3：图片
-        if content["images"]:
-            message_segments: List[MessageSegment] = [
-                MessageSegment.text("")
-            ]
-        else:
-            message_segments: List[MessageSegment] = [
-                MessageSegment.text("此推文无图片")
-            ]
-
-        for index, img_url in enumerate(content["images"], 1):
-            # 添加图片消息段
-            message_segments.append(
-                MessageSegment.image(img_url)
-            )
-        node3_content = Message(message_segments)
-
-        # --- 2. 构造自定义节点列表 ---
-        # 节点 1
         node1 = MessageSegment.node_custom(
             user_id=SELF_ID,
             nickname="Ksm 初号机",
             content=node1_content,
         )
+        forward_nodes.append(node1)
 
-        # 节点 2
-        node2 = MessageSegment.node_custom(
-            user_id=SELF_ID,
-            nickname="Ksm 初号机",
-            content=node2_content,
-        )
+        # 节点 2：翻译
+        if None not in trans_msg:
+            node2_content = MessageSegment.text(trans_msg)
+            node2 = MessageSegment.node_custom(
+                user_id=SELF_ID,
+                nickname="Ksm 初号机",
+                content=node2_content,
+            )
+            forward_nodes.append(node2)
 
-        # 节点 3
-        node3 = MessageSegment.node_custom(
-            user_id=SELF_ID,
-            nickname="Ksm 初号机",
-            content=node3_content,
-        )
+        # 节点3：图片
+        if content["images"]:
+            message_segments: List[MessageSegment] = [
+                MessageSegment.text("")
+            ]
+            for index, img_url in enumerate(content["images"], 1):
+                # 添加图片消息段
+                message_segments.append(
+                    MessageSegment.image(img_url)
+                )
+            node3_content = Message(message_segments)
+            node3 = MessageSegment.node_custom(
+                user_id=SELF_ID,
+                nickname="Ksm 初号机",
+                content=node3_content,
+            )
+            forward_nodes.append(node3)
 
-        # 将所有节点放入一个列表中
-        forward_nodes = [node1, node2, node3]
 
         # --- 3. 打包发送 ---
         # 将节点列表转换为一个包含所有转发节点的 Message 对象
@@ -296,7 +297,8 @@ class rss_get():
                 if not data.get("entries"):
                     logger.error("该用户暂无动态或不存在")
                     try:
-                        requests.get(UT_URL)
+                        URL = UT_URL + f"?status=up&msg={plantform_name.name}可能暂时不可用&ping="
+                        requests.get(URL)
                     except Exception as e:
                         logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
                     return
@@ -304,10 +306,17 @@ class rss_get():
                 if len(data.get("entries")) == 0:
                     logger.error("该用户暂无动态或不存在")
                     try:
-                        requests.get(UT_URL)
+                        URL = UT_URL + f"?status=up&msg={plantform_name.name}可能暂时不可用&ping="
+                        requests.get(URL)
                     except Exception as e:
                         logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
                     return
+
+                try:
+                    URL = UT_URL + f"?status=down&msg={plantform_name.name}已恢复正常&ping="
+                    requests.get(URL)
+                except Exception as e:
+                    logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
 
                 # 处理最新五条推文
                 for data_number in range(0,3):
