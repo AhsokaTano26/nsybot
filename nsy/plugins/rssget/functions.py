@@ -33,6 +33,7 @@ async def User_name_get(id):
 
 # 配置项
 RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址
+RSSHUB_HOST_BACK = os.getenv('RSSHUB_HOST_BACK', None)  # Rsshub 后备地址
 MODEL_NAME = os.getenv('MODEL_NAME', "None")
 UT_URL = os.getenv('UT_URL', "None")
 TIMEOUT = 30  # 请求超时时间
@@ -294,23 +295,29 @@ class rss_get():
                 if "error" in data:
                     logger.opt(exception=False).error(data["error"])
 
-                if not data.get("entries"):
-                    logger.error("该用户暂无动态或不存在")
-                    try:
-                        URL = UT_URL + f"?status=up&msg={plantform_name.name}可能暂时不可用&ping="
-                        requests.get(URL)
-                    except Exception as e:
-                        logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
-                    return
 
-                if len(data.get("entries")) == 0:
-                    logger.error("该用户暂无动态或不存在")
+                if len(data.get("entries")) == 0 or not data.get("entries"):
+                    logger.error("该用户暂无动态或不存在,尝试使用备用地址")
                     try:
-                        URL = UT_URL + f"?status=up&msg={plantform_name.name}可能暂时不可用&ping="
+                        URL = UT_URL + f"?status=up&msg={plantform_name.name}可能暂时不可用,尝试使用备用地址&ping="
                         requests.get(URL)
                     except Exception as e:
                         logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
-                    return
+
+
+                    if RSSHUB_HOST_BACK is not None:
+                        feed_url_back = f"{RSSHUB_HOST_BACK}{url}{userid}"
+                        data = await fetch_feed(feed_url_back)
+                        if len(data.get("entries")) == 0 or not data.get("entries"):
+                            logger.error("备用地址该用户暂无动态或不存在")
+                            try:
+                                URL = UT_URL + f"?status=up&msg={plantform_name.name}备用地址可能暂时不可用&ping="
+                                requests.get(URL)
+                            except Exception as e:
+                                logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
+                            return
+                    else:
+                        return
 
                 try:
                     URL = UT_URL + f"?status=down&msg={plantform_name.name}已恢复正常&ping="
