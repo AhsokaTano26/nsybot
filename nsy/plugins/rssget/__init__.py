@@ -28,9 +28,9 @@ from .config import Config
 __plugin_meta__ = PluginMetadata(
     name="Twitter RSS订阅",
     description="通过RSSHub获取Twitter用户最新动态并发送图片",
-    usage="/rss [用户名]  # 获取指定用户最新推文",
+    usage="rss [用户名]  # 获取指定用户最新推文",
     type="QQbot",
-    homepage="https://github.com/your/repo",
+    homepage="https://github.com/AhsokaTano26/nsybot",
 )
 
 B = DeepSeek()  # 初始化DeepSeek翻译类
@@ -49,7 +49,6 @@ RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地
 
 
 TIMEOUT = 30  # 请求超时时间
-MAX_IMAGES = 10  # 最多发送图片数量
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
@@ -147,7 +146,7 @@ def extract_content(entry,if_need_trans) -> dict:
         "link": entry.link,
         "text": clean_text,
         "trans_text": trans_text,
-        "images": images[:MAX_IMAGES]
+        "images": images
     }
 
 
@@ -726,20 +725,38 @@ async def handle_rss(event: GroupMessageEvent):
     bot = get_bot()
     group_id = event.group_id
     SELF_ID = int(os.getenv('SELF_ID', "10001"))
-    node1_content = Message("📋 nsy推文转发bot命令帮助：\n"
-                    "注：{}内的内容为发起请求时填写内容 \n"
-                    "推文查看: rss {用户名} {文章序列号(不填默认为0，即最新文章)}\n"
-                    "订阅列表：订阅列表\n"
-                    "开始订阅：订阅 {用户名} {推送群组}\n"
-                    "查询用户推文列表：文章列表 {用户名}\n"
-                    "取消订阅：取消订阅 {用户名} {推送群组}\n"
-                    "增加用户：增加用户 {用户ID} {用户名} {平台名}\n"
-                    "删除用户：删除用户 {用户ID} {用户名}\n"
-                    "用户列表：用户列表\n"
-                    "查询群组订阅：查询 群组 {群组ID} \n"
-                    "查询用户被订阅：查询 用户 {用户ID} \n"
-                    "本项目已开源，欢迎star\n"
-                    "项目地址：https://github.com/AhsokaTano26/nsybot")
+    node1_content = Message("""🤖 nsy 推文助手：订阅三步走
+——————
+想让机器人自动转发推特？请按以下顺序操作：
+第一步：查 🔍
+发送命令： 
+用户列表
+确认你想看的博主是否在名单里。
+第二步：加 ➕
+如果你想看的博主不在名单里，请联系管理员，发送博主信息申请添加：
+用户ID 用户名 平台名
+第三步：订 🔔
+名单里有了之后，发送订阅命令：
+订阅 用户名 群号
+例：订阅 aibaaiai 群号
+——————
+📜 常用命令快捷手册：
+🔹 随便看看：
+• 看最新推文：rss 用户名
+• 看往期文章：rss 用户名 序号
+• 用户作品集：文章列表 用户名
+🔹 管理订阅：
+• 查看谁被订了：订阅列表
+• 取消自动转发：取消订阅 用户名 群组名
+• 查群订阅详情：查询 群组 群组ID
+⚠️ 避坑小贴士：
+1. 必须是列表里的用户才能订阅，不在请找管理！
+2. 指令之间要有空格，不要带 {} 括号。
+3. 序号不填默认为 0（最新一条）。
+——————
+⭐ 项目开源地址：
+https://github.com/AhsokaTano26/nsybot
+""")
     node1 = MessageSegment.node_custom(
         user_id=SELF_ID,
         nickname="Ksm 初号机",
