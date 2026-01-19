@@ -32,7 +32,6 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Generate Tags
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: docker/metadata-action@v4
         id: metadata
         with:
