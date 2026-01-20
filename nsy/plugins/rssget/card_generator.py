@@ -15,6 +15,7 @@ Twitter 风格推文卡片生成器
 """
 
 import asyncio
+import re
 from io import BytesIO
 from pathlib import Path
 
@@ -23,11 +24,26 @@ from nonebot import get_plugin_config
 from nonebot.log import logger
 from PIL import Image, ImageDraw, ImageFont
 from pilmoji import Pilmoji
+from pilmoji.source import (AppleEmojiSource, GoogleEmojiSource,
+                            TwitterEmojiSource)
 
 from .avatar_manager import avatar_manager
 from .config import Config
 
 config = get_plugin_config(Config)
+
+# 需要清理的特殊 Unicode 字符（会导致方框显示）
+_INVISIBLE_CHARS = re.compile(
+    r'[\uFE0F\uFE0E\u200D\u200B\u200C\u200E\u200F\u2060\u2061\u2062\u2063\u2064\uFEFF]'
+)
+
+
+def _clean_text(text: str) -> str:
+    """清理文本中可能导致方框显示的不可见字符"""
+    if not text:
+        return text
+    # 移除变体选择符和零宽字符（pilmoji 处理 emoji 后可能残留）
+    return _INVISIBLE_CHARS.sub('', text)
 
 
 class TwitterCardGenerator:
@@ -60,24 +76,24 @@ class TwitterCardGenerator:
         Args:
             content: 推文内容字典，包含 username, text, trans_text, time, link, images
             username: 用户ID（如 tanda_hazuki）
-            可选: display_name 显示名称（如 反田葉月），如果没有则使用 username
+            可选: display_name 显示名称（如 反田葉月 哈酱，，，），如果没有则使用 username(userid)
 
         Returns:
             PNG 图片的 bytes
         """
         user_id = content.get("username", "Unknown")  # 用户ID，如 tanda_hazuki
         display_name = content.get("display_name", user_id)  # 显示名称，如 反田葉月
-        text = content.get("text", "")
+        text = content.get("text", "") or ""
         trans_text = content.get("trans_text")
-        time_str = content.get("time", "")
-        images = content.get("images", [])[:self.MAX_IMAGES]
+        time_str = content.get("time", "") or ""
+        images = (content.get("images") or [])[:self.MAX_IMAGES]
 
-        # 1. 获取头像
+        # 获取头像
         avatar = await avatar_manager.get_avatar(user_id, display_name)
         avatar = avatar_manager.make_circle(avatar)
         avatar = avatar.resize((self.AVATAR_SIZE, self.AVATAR_SIZE), Image.Resampling.LANCZOS)
 
-        # 2. 预计算各区域高度
+        # 预计算各区域高度
         content_width = self.CARD_WIDTH - 2 * self.PADDING
 
         # 文本字体
@@ -91,12 +107,13 @@ class TwitterCardGenerator:
         text_lines = self._wrap_text(text, text_font, content_width)
         text_height = len(text_lines) * 24 if text_lines else 0
 
-        # 计算翻译高度
+        # 计算翻译高度（包含标题、内容、来源标注）
         trans_lines = []
         trans_height = 0
         if trans_text:
-            trans_lines = self._wrap_text(trans_text, trans_font, content_width - 20)
-            trans_height = len(trans_lines) * 22 + 20 if trans_lines else 0
+            trans_lines = self._wrap_text(trans_text, trans_font, content_width - 24)
+            # 标题(20) + 内容 + 来源(18) + 内边距(16) + 外边距(12)
+            trans_height = 20 + len(trans_lines) * 22 + 18 + 16 + 12 if trans_lines else 0
 
         # 计算图片区域高度
         images_height = 0
@@ -106,7 +123,7 @@ class TwitterCardGenerator:
             if downloaded_images:
                 images_height = self._calc_images_height(len(downloaded_images)) + 16
 
-        # 3. 计算总高度并创建画布
+        # 计算总高度并创建画布
         header_height = self.AVATAR_SIZE + 20
         total_height = (
             self.PADDING +           # 顶部边距
@@ -123,27 +140,26 @@ class TwitterCardGenerator:
 
         y_offset = self.PADDING
 
-        # 4. 绘制头像和用户信息
+        # 绘制头像和用户信息
         y_offset = self._draw_header(
             draw, image, avatar, display_name, user_id, time_str,
             display_name_font, user_id_font, time_font, y_offset
         )
 
-        # 5. 绘制原文
-        y_offset = self._draw_text(draw, text_lines, text_font, y_offset, image)
+        # 绘制原文和翻译
+        y_offset = self._draw_content(
+            draw, image, text_lines, trans_lines, text_font, trans_font, y_offset,
+            has_translation=bool(trans_text and trans_lines)
+        )
 
-        # 6. 绘制翻译（如果有）
-        if trans_text and trans_lines:
-            y_offset = self._draw_translation(draw, image, trans_lines, trans_font, y_offset)
-
-        # 7. 绘制图片（如果有）
+        # 绘制图片
         if downloaded_images:
             y_offset = self._draw_images(image, downloaded_images, y_offset)
 
-        # 8. 绘制底部
+        # 7. 绘制底部
         self._draw_footer(draw, y_offset)
 
-        # 9. 导出为 bytes
+        # 导出为 bytes
         buffer = BytesIO()
         image.save(buffer, format="PNG", optimize=True)
         return buffer.getvalue()
@@ -160,20 +176,27 @@ class TwitterCardGenerator:
         font_paths = [
             # 自定义字体（优先级最高）
             config.card_font_path if config.card_font_path else "",
-            # 项目目录字体 - Noto Sans CJK（支持中日韩英文）
-            str(project_font_dir / "NotoSansCJKsc-Bold.otf") if bold else str(project_font_dir / "NotoSansCJKsc-Regular.otf"),
-            str(project_font_dir / "NotoSansCJK-Bold.ttc") if bold else str(project_font_dir / "NotoSansCJK-Regular.ttc"),
+            # 项目目录字体 - 推荐使用 Noto Sans CJK（支持中日韩英文）
+            # 本地部署：下载 https://github.com/notofonts/noto-cjk/releases 放到 data/fonts/
+            # Docker：apt install fonts-noto-cjk fonts-noto
+            str(project_font_dir / ("NotoSansCJKsc-Bold.otf" if bold else "NotoSansCJKsc-Regular.otf")),
+            str(project_font_dir / ("NotoSansCJK-Bold.ttc" if bold else "NotoSansCJK-Regular.ttc")),
             str(project_font_dir / "NotoSansSC-VariableFont_wght.ttf"),
-            # Windows - 优先使用支持中日文的字体
-            "C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc",  # 微软雅黑
-            "C:/Windows/Fonts/simsun.ttc",  # 宋体
-            "C:/Windows/Fonts/simhei.ttf",  # 黑体
+            # Windows 字体
+            "C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc",  # 微软雅黑（中日韩）
+            "C:/Windows/Fonts/seguisym.ttf",  # Segoe UI Symbol（特殊符号）
+            "C:/Windows/Fonts/yugothb.ttc" if bold else "C:/Windows/Fonts/yugothic.ttc",  # 游ゴシック（日文）
+            "C:/Windows/Fonts/malgun.ttf",  # Malgun Gothic（韩文）
+            "C:/Windows/Fonts/simsun.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
             # macOS
             "/System/Library/Fonts/PingFang.ttc",
             "/Library/Fonts/Arial Unicode.ttf",
-            # Linux
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/System/Library/Fonts/Apple Symbols.ttf",
+            # Linux（apt install fonts-noto-cjk fonts-noto）
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         ]
 
         for path in font_paths:
@@ -191,6 +214,9 @@ class TwitterCardGenerator:
         """文本自动换行，支持中日英混排"""
         if not text:
             return []
+
+        # 清理可能导致方框的不可见字符
+        text = _clean_text(text)
 
         lines = []
         # 先按换行符分割
@@ -257,52 +283,167 @@ class TwitterCardGenerator:
 
         return y_offset + self.AVATAR_SIZE + 20
 
-    def _draw_text(
-        self, draw: ImageDraw.ImageDraw, lines: list[str],
-        font: ImageFont.FreeTypeFont, y_offset: int,
-        image: Image.Image = None
+    def _draw_content(
+        self, draw: ImageDraw.ImageDraw, image: Image.Image,
+        text_lines: list[str], trans_lines: list[str],
+        text_font: ImageFont.FreeTypeFont, trans_font: ImageFont.FreeTypeFont,
+        y_offset: int, has_translation: bool = False
     ) -> int:
-        """绘制原文区域（支持 emoji）"""
-        line_height = 24
+        """
+        绘制原文和翻译内容
+        """
+        content_width = self.CARD_WIDTH - 2 * self.PADDING
+        line_height_text = 24
+        line_height_trans = 22
 
-        with Pilmoji(image) as pilmoji:
-            for line in lines:
-                pilmoji.text(
+        # 使用单个 Pilmoji 上下文处理所有文本绘制
+        # 使用 Twitter emoji 源，并在网络失败时回退到纯文本
+        try:
+            with Pilmoji(image, source=TwitterEmojiSource) as pilmoji:
+                # 绘制原文
+                for line in text_lines:
+                    pilmoji.text(
+                        (self.PADDING, y_offset),
+                        line,
+                        fill=self.COLORS["text_primary"],
+                        font=text_font
+                    )
+                    y_offset += line_height_text
+
+                y_offset += 16  # 原文后间距
+
+                # 绘制翻译区域（如果有）
+                if has_translation and trans_lines:
+                    y_offset = self._draw_translation_block(
+                        draw, pilmoji, y_offset, content_width,
+                        trans_lines, line_height_trans
+                    )
+        except Exception as e:
+            # 网络失败时回退到纯 PIL 绘制（无 emoji）
+            logger.warning(f"Pilmoji 渲染失败，回退到纯文本模式: {e}")
+            for line in text_lines:
+                draw.text(
                     (self.PADDING, y_offset),
                     line,
                     fill=self.COLORS["text_primary"],
-                    font=font
+                    font=text_font
                 )
-                y_offset += line_height
+                y_offset += line_height_text
 
-        return y_offset + 16
+            y_offset += 16
 
-    def _draw_translation(
-        self, draw: ImageDraw.ImageDraw, image: Image.Image,
-        lines: list[str], font: ImageFont.FreeTypeFont, y_offset: int
+            if has_translation and trans_lines:
+                y_offset = self._draw_translation_block_fallback(
+                    draw, y_offset, content_width,
+                    trans_lines, line_height_trans
+                )
+
+        return y_offset
+
+    def _draw_translation_block(
+        self, draw: ImageDraw.ImageDraw, pilmoji: Pilmoji,
+        y_offset: int, content_width: int,
+        trans_lines: list[str], line_height_trans: int
     ) -> int:
-        """绘制翻译区域（带背景，支持 emoji）"""
-        line_height = 22
-        content_width = self.CARD_WIDTH - 2 * self.PADDING
-        block_height = len(lines) * line_height + 16
+        """绘制翻译区块（使用 Pilmoji）"""
+        trans_title_height = 20
+        trans_content_height = len(trans_lines) * line_height_trans
+        trans_footer_height = 18
+        block_height = trans_title_height + trans_content_height + trans_footer_height + 16
 
-        # 绘制背景
+        # 绘制翻译背景
         draw.rectangle(
             [self.PADDING, y_offset, self.PADDING + content_width, y_offset + block_height],
             fill=self.COLORS["trans_bg"]
         )
+        # 左侧强调线
+        draw.rectangle(
+            [self.PADDING, y_offset, self.PADDING + 3, y_offset + block_height],
+            fill=self.COLORS["link"]
+        )
 
-        # 绘制文字（支持 emoji）
-        text_y = y_offset + 8
-        with Pilmoji(image) as pilmoji:
-            for line in lines:
-                pilmoji.text(
-                    (self.PADDING + 10, text_y),
-                    line,
-                    fill=self.COLORS["text_secondary"],
-                    font=font
-                )
-                text_y += line_height
+        # 翻译标题
+        trans_title_font = self._get_font(12)
+        pilmoji.text(
+            (self.PADDING + 12, y_offset + 6),
+            "📝 翻译",
+            fill=self.COLORS["text_secondary"],
+            font=trans_title_font
+        )
+
+        # 翻译内容
+        trans_font = self._get_font(15)
+        text_y = y_offset + trans_title_height + 8
+        for line in trans_lines:
+            pilmoji.text(
+                (self.PADDING + 12, text_y),
+                line,
+                fill=self.COLORS["text_primary"],
+                font=trans_font
+            )
+            text_y += line_height_trans
+
+        # 翻译来源标注
+        source_font = self._get_font(11)
+        draw.text(
+            (self.PADDING + 12, y_offset + block_height - 16),
+            "由 DeepSeek 翻译",
+            fill=self.COLORS["text_secondary"],
+            font=source_font
+        )
+
+        return y_offset + block_height + 12
+
+    def _draw_translation_block_fallback(
+        self, draw: ImageDraw.ImageDraw,
+        y_offset: int, content_width: int,
+        trans_lines: list[str], line_height_trans: int
+    ) -> int:
+        """绘制翻译区块（回退模式，无 emoji）"""
+        trans_title_height = 20
+        trans_content_height = len(trans_lines) * line_height_trans
+        trans_footer_height = 18
+        block_height = trans_title_height + trans_content_height + trans_footer_height + 16
+
+        # 绘制翻译背景
+        draw.rectangle(
+            [self.PADDING, y_offset, self.PADDING + content_width, y_offset + block_height],
+            fill=self.COLORS["trans_bg"]
+        )
+        draw.rectangle(
+            [self.PADDING, y_offset, self.PADDING + 3, y_offset + block_height],
+            fill=self.COLORS["link"]
+        )
+
+        # 翻译标题（无 emoji）
+        trans_title_font = self._get_font(12)
+        draw.text(
+            (self.PADDING + 12, y_offset + 6),
+            "翻译",
+            fill=self.COLORS["text_secondary"],
+            font=trans_title_font
+        )
+
+        # 翻译内容
+        trans_font = self._get_font(15)
+        text_y = y_offset + trans_title_height + 8
+        for line in trans_lines:
+            draw.text(
+                (self.PADDING + 12, text_y),
+                line,
+                fill=self.COLORS["text_primary"],
+                font=trans_font
+            )
+            text_y += line_height_trans
+
+        # 翻译来源标注
+        source_font = self._get_font(11)
+        draw.text(
+            (self.PADDING + 12, y_offset + block_height - 16),
+            "由 DeepSeek 翻译",
+            fill=self.COLORS["text_secondary"],
+            font=source_font
+        )
 
         return y_offset + block_height + 12
 
