@@ -204,6 +204,15 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             user = await User_name_get(userid)
             username = user.User_Name
 
+            # 获取群组配置（卡片模式）
+            group_id = event.group_id
+            group_config = await GroupconfigManger.get_Sign_by_group_id(db_session, group_id)
+            if_need_card = False
+            if group_config:
+                if_need_card_raw = getattr(group_config, 'if_need_card', False)
+                if_need_card = bool(if_need_card_raw) if if_need_card_raw is not None else False
+            logger.info(f"群组 {group_id} 卡片模式: {if_need_card}")
+
             # 获取数据
             data = await fetch_feed(feed_url)
             if "error" in data:
@@ -224,6 +233,24 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                     if existing_lanmsg:  # 如有记录
                         logger.info(f"该 {trueid} 推文已存在")
                         content = await get_text(trueid)    #从本地数据库获取信息
+                        content["username"] = userid  # 用户ID，如 tanda_hazuki
+                        content["display_name"] = username  # 显示名称，如 反田葉月
+
+                        # 卡片模式
+                        if if_need_card:
+                            try:
+                                from .card_generator import card_generator
+                                logger.info("开始生成卡片...")
+                                card_bytes = await card_generator.generate(content)
+                                logger.info(f"卡片生成完成，大小: {len(card_bytes)} bytes")
+                                card_segment = MessageSegment.image(card_bytes)
+                                await rss_cmd.send(card_segment)
+                                logger.info("卡片发送成功")
+                                return  # 发送成功后直接返回
+                            except Exception as e:
+                                logger.error(f"卡片生成失败，回退到普通模式: {e}")
+
+                        # 普通模式
                         msg = [
                             f"🐦 用户 {username} 最新动态",
                             f"⏰ {content['time']}",
@@ -251,11 +278,28 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                     else:   #从RSSHUB获取信息
                         logger.info(f"该 {trueid} 推文不存在")
                         content = extract_content(latest,if_need_trans)
-                        content["username"] = username
+                        content["username"] = userid  # 用户ID，如 tanda_hazuki
+                        content["display_name"] = username  # 显示名称，如 反田葉月
                         content["id"] = trueid
                         await update_text(content)
                         # 构建文字消息
                         logger.info(f"成功获取对于 {username} 的 {trueid} 推文")
+
+                        # 卡片模式
+                        if if_need_card:
+                            try:
+                                from .card_generator import card_generator
+                                logger.info("开始生成卡片...")
+                                card_bytes = await card_generator.generate(content)
+                                logger.info(f"卡片生成完成，大小: {len(card_bytes)} bytes")
+                                card_segment = MessageSegment.image(card_bytes)
+                                await rss_cmd.send(card_segment)
+                                logger.info("卡片发送成功")
+                                return  # 发送成功后直接返回
+                            except Exception as e:
+                                logger.error(f"卡片生成失败，回退到普通模式: {e}")
+
+                        # 普通模式
                         msg = [
                             f"🐦 用户 {username} 最新动态",
                             f"⏰ {content['time']}",
@@ -670,11 +714,14 @@ async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     group_id = event.group_id
     try:
-        if_need_trans = True if int(command.split(" ")[0]) == 1 else False
-        if_need_self_trans = True if int(command.split(" ")[1]) == 1 else False
-        if_need_translate = True if int(command.split(" ")[2]) == 1 else False
-        if_need_photo_num_mention = True if int(command.split(" ")[3]) == 1 else False
-        if_need_merged_message = True if int(command.split(" ")[4]) == 1 else False
+        parts = command.split(" ")
+        if_need_trans = True if int(parts[0]) == 1 else False
+        if_need_self_trans = True if int(parts[1]) == 1 else False
+        if_need_translate = True if int(parts[2]) == 1 else False
+        if_need_photo_num_mention = True if int(parts[3]) == 1 else False
+        if_need_merged_message = True if int(parts[4]) == 1 else False
+        # 第6个参数：卡片模式（可选，默认False）
+        if_need_card = True if len(parts) > 5 and int(parts[5]) == 1 else False
 
         async with (get_session() as db_session):
             config_msg = await GroupconfigManger.get_Sign_by_group_id(db_session, group_id)
@@ -687,7 +734,8 @@ async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
                         if_need_self_trans=if_need_self_trans,
                         if_need_translate=if_need_translate,
                         if_need_photo_num_mention=if_need_photo_num_mention,
-                        if_need_merged_message=if_need_merged_message
+                        if_need_merged_message=if_need_merged_message,
+                        if_need_card=if_need_card
                     )
                     await group_config.finish(f"创建群组 {group_id} 配置成功")
                 except SQLAlchemyError as e:
@@ -704,15 +752,16 @@ async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
                         if_need_self_trans=if_need_self_trans,
                         if_need_translate=if_need_translate,
                         if_need_photo_num_mention=if_need_photo_num_mention,
-                        if_need_merged_message=if_need_merged_message
+                        if_need_merged_message=if_need_merged_message,
+                        if_need_card=if_need_card
                     )
                     await group_config.finish(f"创建群组 {group_id} 配置成功")
                 except SQLAlchemyError as e:
                     logger.opt(exception=False).error(f"数据库操作错误: {e}")
                     await group_config.finish(f"创建群组 {group_id} 配置失败")
 
-    except IndexError:
-        await group_config.finish("请输入正确的命令")
+    except (IndexError, ValueError):
+        await group_config.finish("请输入正确的命令，例如：群组配置 1 0 1 1 1 0")
 
 
 help = on_command("/help", aliases={"/帮助","help","帮助"}, priority=10,rule=ignore_group & to_me())

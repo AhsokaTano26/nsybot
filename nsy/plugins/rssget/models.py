@@ -46,3 +46,4 @@ class Groupconfig(Model):
     if_need_translate = Column(BOOLEAN, nullable=False)
     if_need_photo_num_mention = Column(BOOLEAN, nullable=False)
     if_need_merged_message = Column(BOOLEAN, nullable=False)
+    if_need_card = Column(BOOLEAN, nullable=False, default=False)

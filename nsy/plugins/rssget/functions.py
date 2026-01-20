@@ -155,13 +155,17 @@ class rss_get():
                     if_need_translate = group_config.if_need_translate
                     if_need_photo_num_mention = group_config.if_need_photo_num_mention
                     if_need_merged_message = group_config.if_need_merged_message
-                    logger.opt(exception=False).info(f"成功获取群组配置: {group_config}")
+                    # 确保 if_need_card 是布尔值（数据库可能存储为整数）
+                    if_need_card_raw = getattr(group_config, 'if_need_card', False)
+                    if_need_card = bool(if_need_card_raw) if if_need_card_raw is not None else False
+                    logger.opt(exception=False).info(f"成功获取群组配置: if_need_card={if_need_card} (原始值: {if_need_card_raw})")
                 else:
                     if_need_user_trans = True
                     if_need_self_trans = False
                     if_need_translate = True
                     if_need_photo_num_mention = True
                     if_need_merged_message = False
+                    if_need_card = False
                     logger.opt(exception=False).info(f"使用默认群组配置")
             except SQLAlchemyError:
                 logger.opt(exception=False).error(f"数据库错误")
@@ -170,51 +174,73 @@ class rss_get():
                 if_need_translate = True
                 if_need_photo_num_mention = True
                 if_need_merged_message = False
+                if_need_card = False
                 logger.opt(exception=False).info(f"使用默认群组配置")
 
             if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
-                # 构建文字消息
-                msg = [
-                    f"🐦 用户 {content["username"]} 最新动态\n"
-                    f"⏰ {content['time']}\n"
-                    f"🔗 {content['link']}"
-                    "\n📝 正文："
-                    f"{content['text']}"
-                ]
-
-                trans_msg = [
-                    f"{content["trans_text"]}"
-                    f"\n【翻译由{MODEL_NAME}提供】"
-                ]
-
-                if if_need_merged_message:
-                    await self.handle_merge_send(group_id=group_id, msg=msg, trans_msg=trans_msg, content=content)
-                else:
-                    await bot.call_api("send_group_msg", **{
-                        "group_id": group_id,
-                        "message": "\n".join(msg)
-                    })
-
-                    if if_need_trans and if_need_translate:
-
+                logger.info(f"进入发送逻辑，if_need_card={if_need_card}")
+                # 卡片模式
+                if if_need_card:
+                    logger.info("进入卡片模式分支，开始生成卡片...")
+                    try:
+                        from .card_generator import card_generator
+                        card_bytes = await card_generator.generate(content)
+                        logger.info(f"卡片生成完成，大小: {len(card_bytes)} bytes")
+                        card_segment = MessageSegment.image(card_bytes)
                         await bot.call_api("send_group_msg", **{
                             "group_id": group_id,
-                            "message": "\n".join(trans_msg)
+                            "message": card_segment
+                        })
+                        logger.info("成功发送卡片图片")
+                        return  # 卡片发送成功后直接返回，不再发送普通消息
+                    except Exception as e:
+                        logger.opt(exception=False).error(f"卡片生成失败，回退到普通模式: {e}")
+                        if_need_card = False  # 回退到普通模式
+
+                # 普通模式（或卡片生成失败时回退）
+                if not if_need_card:
+                    # 构建文字消息
+                    msg = [
+                        f"🐦 用户 {content['username']} 最新动态\n"
+                        f"⏰ {content['time']}\n"
+                        f"🔗 {content['link']}"
+                        "\n📝 正文："
+                        f"{content['text']}"
+                    ]
+
+                    trans_msg = [
+                        f"{content['trans_text']}"
+                        f"\n【翻译由{MODEL_NAME}提供】"
+                    ]
+
+                    if if_need_merged_message:
+                        await self.handle_merge_send(group_id=group_id, msg=msg, trans_msg=trans_msg, content=content)
+                    else:
+                        await bot.call_api("send_group_msg", **{
+                            "group_id": group_id,
+                            "message": "\n".join(msg)
                         })
 
-                    logger.info("成功发送文字信息")
+                        if if_need_trans and if_need_translate:
 
-                    # 发送图片（单独处理）
-                    if content["images"]:
-                        if if_need_photo_num_mention:
                             await bot.call_api("send_group_msg", **{
                                 "group_id": group_id,
-                                "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                "message": "\n".join(trans_msg)
                             })
-                        for index, img_url in enumerate(content["images"], 1):
-                            await self.send_onebot_image(img_url, group_id, num=0)
 
-                    logger.info("成功发送图片信息")
+                        logger.info("成功发送文字信息")
+
+                        # 发送图片（单独处理）
+                        if content["images"]:
+                            if if_need_photo_num_mention:
+                                await bot.call_api("send_group_msg", **{
+                                    "group_id": group_id,
+                                    "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
+                                })
+                            for index, img_url in enumerate(content["images"], 1):
+                                await self.send_onebot_image(img_url, group_id, num=0)
+
+                        logger.info("成功发送图片信息")
 
     @staticmethod
     async def handle_merge_send(group_id, msg, trans_msg, content):
@@ -341,6 +367,8 @@ class rss_get():
                                 if existing_lanmsg:  # 本地数据库是否有推文内容
                                     logger.info(f"该 {trueid} 推文本地已存在")
                                     content = await get_text(trueid)
+                                    content["username"] = userid  # 用户ID
+                                    content["display_name"] = username  # 显示名称
                                     try:
                                         # 检查数据库中是否已存在该 id 的记录
                                         existing_lanmsg = await DetailManger.get_Sign_by_student_id(
@@ -385,7 +413,8 @@ class rss_get():
                                             logger.info(f"{id_with_group}已发送")
                                         else:
                                             content = await extract_content(latest, if_need_trans)
-                                            content["username"] = username
+                                            content["username"] = userid  # 用户ID
+                                            content["display_name"] = username  # 显示名称
                                             content["id"] = trueid
                                             await update_text(content)
                                             try:
