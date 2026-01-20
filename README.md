@@ -59,8 +59,9 @@
 > - 环境变量配置：
 >   - `API_KEY`：翻译服务API密钥（DeepSeek/百度/阿里）
 >   - `SECRET_KEY`：百度翻译专用密钥（使用DeepSeek时可不填）
->   - `REFRESH_TIME`：更新周期（单位：分钟）
+>   - `REFRESH_TIME`：更新周期（单位：分钟，默认20）
 >   - `RSSHUB_HOST`：RSSHub实例地址，默认 https://rsshub.app
+>   - `RSSHUB_HOST_BACK`：备用RSSHub地址（可选）
 > - 多平台订阅需在sqlite数据库 `Plantform` 表中手动添加  
 >   ![平台配置示例](/docs/img.png "平台配置")  
 >   - `name`：平台名
@@ -74,9 +75,13 @@
 > 2. 在 `data/` 目录下创建 `db.sqlite3` 文件并写入平台数据
 > 3. 配置环境变量（参考 `.env.example`）
 >
-> **卡片模式字体配置**（可选）：
+> **卡片模式字体配置**（可选，启用卡片模式时需要）：
 > - 下载 [Noto Sans CJK](https://github.com/notofonts/noto-cjk/releases) 字体
-> - 将 `NotoSansCJKsc-Regular.otf` 和 `NotoSansCJKsc-Bold.otf` 放入 `data/fonts/` 目录
+> - 支持的字体文件（任选其一放入 `data/fonts/` 目录）：
+>   - `NotoSansCJKsc-Regular.otf` + `NotoSansCJKsc-Bold.otf`（推荐）
+>   - `NotoSansCJK-Regular.ttc` + `NotoSansCJK-Bold.ttc`
+>   - `NotoSansSC-VariableFont_wght.ttf`
+> - Windows 系统可自动使用微软雅黑字体，无需额外配置
 
 ---
 ## 使用注意事项
