@@ -9,7 +9,6 @@ from nonebot.adapters.onebot.v11 import MessageSegment, Message
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
-import os
 from typing import List
 
 from .models_method import DetailManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
@@ -32,13 +31,13 @@ async def User_name_get(id):
         return sheet1
 
 # 配置项
-RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址
-RSSHUB_HOST_BACK = os.getenv('RSSHUB_HOST_BACK', None)  # Rsshub 后备地址
-MODEL_NAME = os.getenv('MODEL_NAME', "None")
-UT_URL = os.getenv('UT_URL', "None")
+config = get_plugin_config(Config)
+RSSHUB_HOST = config.rsshub_host
+RSSHUB_HOST_BACK = config.rsshub_host_back
+MODEL_NAME = config.model_name
+UT_URL = config.ut_url
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
-config = get_plugin_config(Config)
 
 
 
@@ -221,7 +220,7 @@ class rss_get():
     async def handle_merge_send(group_id, msg, trans_msg, content):
         bot = get_bot()
         # --- 1. 准备节点内容 ---
-        SELF_ID = int(os.getenv('SELF_ID', "10001"))
+        SELF_ID = config.self_id
 
         forward_nodes = []
 

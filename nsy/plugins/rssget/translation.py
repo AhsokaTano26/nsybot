@@ -1,13 +1,20 @@
 import requests
 import json
-import os
 import re
 from openai import OpenAI
+from nonebot import get_plugin_config
 
 from alibabacloud_tea_openapi.client import Client as OpenApiClient
 from alibabacloud_credentials.client import Client as CredentialClient
 from alibabacloud_tea_openapi import models as open_api_models
 from alibabacloud_tea_util import models as util_models
+
+from .config import Config
+
+
+def _get_config():
+    """获取插件配置"""
+    return get_plugin_config(Config)
 
 
 class BaiDu:
@@ -43,8 +50,9 @@ class BaiDu:
         使用 AK，SK 生成鉴权签名（Access Token）
         :return: access_token，或是None(如果错误)
         """
-        API_KEY = os.getenv('API_KEY')
-        SECRET_KEY = os.getenv('SECRET_KEY')
+        config = _get_config()
+        API_KEY = config.api_key
+        SECRET_KEY = config.secret_key
 
         url = "https://aip.baidubce.com/oauth/2.0/token"
         params = {"grant_type": "client_credentials", "client_id": API_KEY, "client_secret": SECRET_KEY}
@@ -66,8 +74,9 @@ class Ali:
         @return: Client
         @throws Exception
         """
-        API_KEY = os.getenv('API_KEY')
-        SECRET_KEY = os.getenv('SECRET_KEY')
+        plugin_config = _get_config()
+        API_KEY = plugin_config.api_key
+        SECRET_KEY = plugin_config.secret_key
 
 
         credential = CredentialClient()
@@ -155,13 +164,14 @@ class Ali:
 
 
 class DeepSeek:
-    def main(self,text):
+    def main(self, text):
+        config = _get_config()
         client = OpenAI(
-            api_key=os.getenv('API_KEY'),  # 环境变量引入 API Key
-            base_url="https://api.deepseek.com"  # DeepSeek API 端点
+            api_key=config.api_key,
+            base_url="https://api.deepseek.com"
         )
         response = client.chat.completions.create(
-            model="deepseek-chat",  # 指定使用的模型
+            model="deepseek-chat",
             messages=[
                 {
                     "role": "system",
@@ -174,7 +184,6 @@ class DeepSeek:
             ],
             stream=False
         )
-        # 3. 提取并返回翻译结果
         translated_text = response.choices[0].message.content
         return translated_text
 
@@ -184,14 +193,14 @@ class Ollama:
     """
     调用本地部署ollama进行翻译
     """
-    def remove_think_tags(self,text):
+    def remove_think_tags(self, text):
         """
         移除文本中 <think> 和 </think> 标签及其之间的内容
         """
         pattern = r'<think>.*?</think>'
         return re.sub(pattern, '', text, flags=re.DOTALL)
 
-    def main(self,text, source_lang="日文", target_lang="中文"):
+    def main(self, text, source_lang="日文", target_lang="中文"):
         """
         使用 Ollama 进行翻译
 
@@ -203,7 +212,8 @@ class Ollama:
 
         返回：翻译结果字符串
         """
-        model = os.getenv('MODEL_NAME')
+        config = _get_config()
+        model = config.model_name
         url = "http://192.168.1.189:11434/api/generate"
         prompt = f"将以下{source_lang}内容翻译成{target_lang}，只返回翻译结果：\n{text}"
 
