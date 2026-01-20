@@ -63,7 +63,7 @@ dmypy.json
 
 # Project specific
 data/
-.env
+!.env
 .env.*
 config.json
 test.py

@@ -24,8 +24,14 @@ ENV SQLALCHEMY_DATABASE_URL=sqlite+aiosqlite:///./data/db.sqlite3
 ENV ALEMBIC_STARTUP_CHECK=True
 ENV ENVIRONMENT=dev
 ENV PYTHON_VERSION=3.12.10
-ENV TZ Asia/Shanghai
+ENV TZ=Asia/Shanghai
 ENV PYTHONPATH=/app
+
+# 安装字体（卡片模式需要）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fonts-noto-cjk \
+    fonts-noto \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY ./docker/gunicorn_conf.py ./docker/start.sh /
 RUN chmod +x /start.sh
