@@ -24,8 +24,7 @@ from nonebot import get_plugin_config
 from nonebot.log import logger
 from PIL import Image, ImageDraw, ImageFont
 from pilmoji import Pilmoji
-from pilmoji.source import (AppleEmojiSource, GoogleEmojiSource,
-                            TwitterEmojiSource)
+from pilmoji.source import TwitterEmojiSource
 
 from .avatar_manager import avatar_manager
 from .config import Config

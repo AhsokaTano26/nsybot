@@ -11,7 +11,7 @@
 - 支持多平台订阅
 - 默认对自我转发内容不进行推送，对于引用内容进行删除
 - 使用Websocket推送
-- **卡片模式**：将推文渲染为精美的图片卡片发送（支持中英日韩文及Emoji）
+- **卡片模式**：将推文生成图片卡片发送（支持中英日韩文及Emoji）
 ---
 ## 使用指南
 - 考虑到有可能会订阅违规内容，因此本bot在订阅时会对订阅用户进行检查，允许访问列表储存在本地sqlite数据库中，管理者可通过增加用户/删除用户/用户列表功能对可访问用户进行增加/删除/查看操作
@@ -96,6 +96,9 @@
 * [CQU Lanunion](https://baike.baidu.com/item/%E9%87%8D%E5%BA%86%E5%A4%A7%E5%AD%A6%E8%93%9D%E7%9B%9F/18227014)
 * [RSSHub](https://github.com/DIYgod/RSSHub)
 * [Nonebot](https://github.com/nonebot/nonebot2)
+* [DeepSeek](https://www.deepseek.com/) - 默认翻译服务
 * [百度机器翻译](https://cloud.baidu.com/doc/API/index.html)
 * [Napcat](https://napneko.github.io/guide/napcat)
 * [onebotv11](https://283375.github.io/onebot_v11_vitepress/)
+* [pilmoji](https://github.com/jay3332/pilmoji) - Emoji 渲染支持
+* [Noto Sans CJK](https://github.com/notofonts/noto-cjk) - CJK 字体

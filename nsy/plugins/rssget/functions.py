@@ -454,7 +454,7 @@ class rss_get():
                                 logger.opt(exception=False).error(f"处理 {latest.get('title')} 时发生错误: {e}")
                         except Exception as e:
                             logger.opt(exception=False).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
-                        time.sleep(0.1)
+                        await asyncio.sleep(0.1)
 
     async def change_config(self):
         config.if_first_time_start = False
