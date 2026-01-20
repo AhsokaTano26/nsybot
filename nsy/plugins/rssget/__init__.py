@@ -1,28 +1,31 @@
+import asyncio
+from datetime import datetime, timedelta
+
 import feedparser
 import httpx
-from datetime import datetime, timedelta
-import time
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
-from nonebot import on_command, get_bot, require, get_plugin_config
-from nonebot.adapters.onebot.v11 import MessageSegment, Message, GroupMessageEvent, GROUP_ADMIN, GROUP_OWNER
+from nonebot import get_bot, get_plugin_config, on_command, require
+from nonebot.adapters.onebot.v11 import (GROUP_ADMIN, GROUP_OWNER,
+                                         GroupMessageEvent, Message,
+                                         MessageSegment)
+from nonebot.log import logger
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
-from nonebot.log import logger
 from nonebot.rule import to_me
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 
-from .functions import rss_get
-from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
-from .models import Detail
-from .encrypt import encrypt
-from .update_text import update_text, get_text
-from .translation import BaiDu, Ollama, Ali, DeepSeek
-from .get_id import get_id
 from .config import Config
-
+from .encrypt import encrypt
+from .functions import rss_get
+from .get_id import get_id
+from .models import Detail
+from .models_method import (ContentManger, DetailManger, GroupconfigManger,
+                            PlantformManger, SubscribeManger, UserManger)
+from .translation import Ali, BaiDu, DeepSeek, Ollama
+from .update_text import get_text, update_text
 
 __plugin_meta__ = PluginMetadata(
     name="Twitter RSS订阅",
@@ -870,7 +873,7 @@ async def refresh_article():
                     try:
                         logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
                         await R.handle_rss(userid=user, group_id_list=sub_list.get(user))
-                        time.sleep(1)
+                        await asyncio.sleep(1)
                     except Exception as e:
                         logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
 

@@ -1,23 +1,23 @@
-import feedparser
-import requests
-import httpx
+import asyncio
 from datetime import datetime, timedelta
-import time
+from typing import List
+
+import feedparser
+import httpx
 from bs4 import BeautifulSoup
 from nonebot import get_bot, get_plugin_config
-from nonebot.adapters.onebot.v11 import MessageSegment, Message
+from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
-from typing import List
 
-from .models_method import DetailManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
-from .get_id import get_id
-from .update_text import get_text
-from .update_text import update_text
-from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
-from .translation import BaiDu, Ollama, Ali, DeepSeek
 from .config import Config
+from .get_id import get_id
+from .models_method import (ContentManger, DetailManger, GroupconfigManger,
+                            PlantformManger, UserManger)
+from .trans_msg import if_self_trans, if_trans, remove_html_tag_soup
+from .translation import Ali, BaiDu, DeepSeek, Ollama
+from .update_text import get_text, update_text
 
 
 async def User_get():
@@ -97,7 +97,7 @@ async def fetch_feed(url: str) -> dict:
     """异步获取并解析RSS内容"""
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            time.sleep(5)
+            await asyncio.sleep(5)
             resp = await client.get(url)
             resp.raise_for_status()
             return feedparser.parse(resp.content)
@@ -325,7 +325,8 @@ class rss_get():
                     logger.error("该用户暂无动态或不存在,尝试使用备用地址")
                     try:
                         URL = UT_URL + f"?status=up&msg={plantform_name.name}可能暂时不可用,尝试使用备用地址&ping="
-                        requests.get(URL)
+                        async with httpx.AsyncClient(timeout=10) as client:
+                            await client.get(URL)
                     except Exception as e:
                         logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
 
@@ -337,7 +338,8 @@ class rss_get():
                             logger.error("备用地址该用户暂无动态或不存在")
                             try:
                                 URL = UT_URL + f"?status=up&msg={plantform_name.name}备用地址可能暂时不可用&ping="
-                                requests.get(URL)
+                                async with httpx.AsyncClient(timeout=10) as client:
+                                    await client.get(URL)
                             except Exception as e:
                                 logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
                             return
@@ -346,7 +348,8 @@ class rss_get():
 
                 try:
                     URL = UT_URL + f"?status=down&msg={plantform_name.name}已恢复正常&ping="
-                    requests.get(URL)
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        await client.get(URL)
                 except Exception as e:
                     logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
 
