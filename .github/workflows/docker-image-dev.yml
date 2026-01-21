@@ -1,9 +1,9 @@
-name: Docker Image CI
+name: Docker Image CI For dev
 
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "dev" ]
 
 jobs:
   docker:
@@ -30,12 +30,11 @@ jobs:
         id: metadata
         with:
           images: |
-            tano26/nsybot
+            tano26/nsybot-dev
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-            # 在此条件下，直接添加 'latest' 标签。
             type=raw,value=latest 
 
       - name: Build and Publish
