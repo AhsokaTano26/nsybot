@@ -9,11 +9,12 @@ services:
     ports:
       - *config-port
     env_file:
-      - .env
+      - .env.prod
     environment:
-      ENVIRONMENT: dev
+      ENVIRONMENT: prod
       HOST: *config-host
       PORT: *config-port
-      SQLALCHEMY_DATABASE_URL: sqlite+aiosqlite:///./data/db.sqlite3
-      ALEMBIC_STARTUP_CHECK: True
     restart: always
+
+    volumes:
+      - ./data:/app/data

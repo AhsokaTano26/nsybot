@@ -1,13 +1,20 @@
 import requests
 import json
-import os
 import re
 from openai import OpenAI
+from nonebot import get_plugin_config
 
 from alibabacloud_tea_openapi.client import Client as OpenApiClient
 from alibabacloud_credentials.client import Client as CredentialClient
 from alibabacloud_tea_openapi import models as open_api_models
 from alibabacloud_tea_util import models as util_models
+
+from .config import Config
+
+
+def get_config():
+    """获取插件配置"""
+    return get_plugin_config(Config)
 
 
 class BaiDu:
@@ -43,11 +50,9 @@ class BaiDu:
         使用 AK，SK 生成鉴权签名（Access Token）
         :return: access_token，或是None(如果错误)
         """
-        API_KEY = os.getenv('API_KEY')
-        SECRET_KEY = os.getenv('SECRET_KEY')
-
+        cfg = get_config()
         url = "https://aip.baidubce.com/oauth/2.0/token"
-        params = {"grant_type": "client_credentials", "client_id": API_KEY, "client_secret": SECRET_KEY}
+        params = {"grant_type": "client_credentials", "client_id": cfg.api_key, "client_secret": cfg.secret_key}
         return str(requests.post(url, params=params).json().get("access_token"))
 
 
@@ -66,19 +71,16 @@ class Ali:
         @return: Client
         @throws Exception
         """
-        API_KEY = os.getenv('API_KEY')
-        SECRET_KEY = os.getenv('SECRET_KEY')
-
-
+        cfg = get_config()
         credential = CredentialClient()
-        config = open_api_models.Config(
+        api_config = open_api_models.Config(
             credential=credential,
-            access_key_id=API_KEY,
-            access_key_secret=SECRET_KEY
+            access_key_id=cfg.api_key,
+            access_key_secret=cfg.secret_key
         )
         # Endpoint 请参考 https://api.aliyun.com/product/alimt
-        config.endpoint = f'mt.cn-hangzhou.aliyuncs.com'
-        return OpenApiClient(config)
+        api_config.endpoint = f'mt.cn-hangzhou.aliyuncs.com'
+        return OpenApiClient(api_config)
 
     @staticmethod
     def create_api_info() -> open_api_models.Params:
@@ -156,8 +158,9 @@ class Ali:
 
 class DeepSeek:
     def main(self,text):
+        cfg = get_config()
         client = OpenAI(
-            api_key=os.getenv('API_KEY'),  # 环境变量引入 API Key
+            api_key=cfg.api_key,
             base_url="https://api.deepseek.com"  # DeepSeek API 端点
         )
         response = client.chat.completions.create(
@@ -203,7 +206,8 @@ class Ollama:
 
         返回：翻译结果字符串
         """
-        model = os.getenv('MODEL_NAME')
+        cfg = get_config()
+        model = cfg.model_name
         url = "http://192.168.1.189:11434/api/generate"
         prompt = f"将以下{source_lang}内容翻译成{target_lang}，只返回翻译结果：\n{text}"
 

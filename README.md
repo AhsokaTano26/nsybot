@@ -44,8 +44,13 @@
 ### Docker部署
 ##### 使用Github的Action自动构建Docker镜像
 - [Docker镜像地址](https://hub.docker.com/r/tano26/nsybot/tags)
->  - 注：部署是需本地创建db.sqlite3文件，并挂载至容器 ***app/data*** 目录下  
- >   - 默认端口为12035
+0. 确保你的系统已安装docker与docker-compose
+1. 点击[此处](https://raw.githubusercontent.com/AhsokaTano26/nsybot/refs/heads/main/docker-compose.yml)下载docker-compose.yml
+2. 本地创建db.sqlite3文件，并放置在容器 ***app/data*** 的**外部映射目录下** ，默认为 docker-compose.yml 同级的/data目录
+3. 下载并复制`.env.example`为`.env.prod`, 放置在docker-compose.yml 同级的目录，使用任意编辑器修改为你的实际配置。
+4. `docker-compose up -d`启动容器
+##### 注意
+>   - 默认端口为12035
 >   - 请于Docker容器的环境变量中给出 ***API_KEY*** 和 ***SECRET_KEY*** 为百度翻译API_KEY和SECRET_KEY  
 >   - 请于Docker容器的环境变量中给出 ***REFRESH_TIME*** 作为更新周期（单位为分钟）
 >   - 请于Docker容器的环境变量中给出 ***RSSHUB_HOST*** 作为RSSHub 实例地址 默认为 https://rsshub.app
@@ -55,13 +60,22 @@
 > 其中 ***name*** 为平台名，***url*** 为Rsshub路由文档所给出的前缀地址，***need_trans*** 为是否需要翻译，1为需要，0为不需要
 >   - 提供百度机器翻译、阿里机器翻译、Deepseek翻译类，可自行调用，默认为Deepseek翻译
 ### 本地部署
->本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)  
-- 将本项目克隆到本地，即可使用，但请注意，需要在项目根文件夹下 ***data*** 文件夹下创建 ***db.sqlite3*** 文件，并提前写入平台数据  
-- 同时请更改项目根文件夹下 ***/nsy/plugins/rssget/function.py*** 以及 ***/nsy/plugins/rssget/____init____.py*** 文件中 环境变量项 
+>本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)，请按如下步骤部署：
+1. 将本项目克隆到本地，在项目根目录下 ***data*** 文件夹下创建 ***db.sqlite3*** 文件，并提前写入平台数据  
+2. 复制`.env.exmaple`为`.env.prod`，填入你的配置项。更多配置项可参考`nsy\plugins\rssget\config.py`
+3. 创建`.env`文件，写入`ENVIRONMENT=prod`
+4. `nb run`命令启动
+
+### 开发
+>本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)，请按如下步骤部署：
+1. 将本项目克隆到本地，在项目根目录下 ***data*** 文件夹下创建 ***db.sqlite3*** 文件，并提前写入平台数据。  
+2. 复制`.env.exmaple`为`.env.dev`，填入你的配置项。更多配置项可参考`nsy\plugins\rssget\config.py`
+3. 创建`.env`文件，写入`ENVIRONMENT=dev`
+4. `nb run`命令启动
 
 ---
 # 使用注意事项
-- 本bot的订阅功能仅群主/群管理员/超级管理员（在 ***.env | .env.prod | . env.dev*** 文件中给出）可使用
+- 本bot的订阅功能仅群主/群管理员/超级管理员（在 ***.env.prod | . env.dev*** 文件中给出）可使用
 - bot默认最多发送10张图片
 ---
 # 感谢以下项目或服务

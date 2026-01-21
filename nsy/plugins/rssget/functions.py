@@ -9,7 +9,6 @@ from nonebot.adapters.onebot.v11 import MessageSegment, Message
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
-import os
 from typing import List
 
 from .models_method import DetailManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
@@ -32,10 +31,6 @@ async def User_name_get(id):
         return sheet1
 
 # 配置项
-RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址
-RSSHUB_HOST_BACK = os.getenv('RSSHUB_HOST_BACK', None)  # Rsshub 后备地址
-MODEL_NAME = os.getenv('MODEL_NAME', "None")
-UT_URL = os.getenv('UT_URL', "None")
 TIMEOUT = 30  # 请求超时时间
 MAX_IMAGES = 10  # 最多发送图片数量
 config = get_plugin_config(Config)
@@ -185,7 +180,7 @@ class rss_get():
 
                 trans_msg = [
                     f"{content["trans_text"]}"
-                    f"\n【翻译由{MODEL_NAME}提供】"
+                    f"\n【翻译由{config.model_name}提供】"
                 ]
 
                 if if_need_merged_message:
@@ -221,14 +216,13 @@ class rss_get():
     async def handle_merge_send(group_id, msg, trans_msg, content):
         bot = get_bot()
         # --- 1. 准备节点内容 ---
-        SELF_ID = int(os.getenv('SELF_ID', "10001"))
-
+        
         forward_nodes = []
 
         # 节点 1：原文
         node1_content = MessageSegment.text(msg)
         node1 = MessageSegment.node_custom(
-            user_id=SELF_ID,
+            user_id=config.self_id,
             nickname="Ksm 初号机",
             content=node1_content,
         )
@@ -238,7 +232,7 @@ class rss_get():
         if None not in trans_msg:
             node2_content = MessageSegment.text(trans_msg)
             node2 = MessageSegment.node_custom(
-                user_id=SELF_ID,
+                user_id=config.self_id,
                 nickname="Ksm 初号机",
                 content=node2_content,
             )
@@ -256,7 +250,7 @@ class rss_get():
                 )
             node3_content = Message(message_segments)
             node3 = MessageSegment.node_custom(
-                user_id=SELF_ID,
+                user_id=config.self_id,
                 nickname="Ksm 初号机",
                 content=node3_content,
             )
@@ -286,7 +280,7 @@ class rss_get():
                 plantform_name = await PlantformManger.get_Sign_by_student_id(db_session,plantform)
                 url = plantform_name.url
                 if_need_trans = int(plantform_name.need_trans)
-                feed_url = f"{RSSHUB_HOST}{url}{userid}"
+                feed_url = f"{config.rsshub_host}{url}{userid}"
                 user = await User_name_get(userid)
                 username = user.User_Name
                 # 获取数据
@@ -299,19 +293,19 @@ class rss_get():
                 if len(data.get("entries")) == 0 or not data.get("entries"):
                     logger.error("该用户暂无动态或不存在,尝试使用备用地址")
                     try:
-                        URL = UT_URL + f"?status=up&msg={plantform_name.name}可能暂时不可用,尝试使用备用地址&ping="
+                        URL = config.ut_url + f"?status=up&msg={plantform_name.name}可能暂时不可用,尝试使用备用地址&ping="
                         requests.get(URL)
                     except Exception as e:
                         logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
 
 
-                    if RSSHUB_HOST_BACK is not None:
-                        feed_url_back = f"{RSSHUB_HOST_BACK}{url}{userid}"
+                    if config.rsshub_host_back is not None:
+                        feed_url_back = f"{config.rsshub_host_back}{url}{userid}"
                         data = await fetch_feed(feed_url_back)
                         if len(data.get("entries")) == 0 or not data.get("entries"):
                             logger.error("备用地址该用户暂无动态或不存在")
                             try:
-                                URL = UT_URL + f"?status=up&msg={plantform_name.name}备用地址可能暂时不可用&ping="
+                                URL = config.ut_url + f"?status=up&msg={plantform_name.name}备用地址可能暂时不可用&ping="
                                 requests.get(URL)
                             except Exception as e:
                                 logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
@@ -320,7 +314,7 @@ class rss_get():
                         return
 
                 try:
-                    URL = UT_URL + f"?status=down&msg={plantform_name.name}已恢复正常&ping="
+                    URL = config.ut_url + f"?status=down&msg={plantform_name.name}已恢复正常&ping="
                     requests.get(URL)
                 except Exception as e:
                     logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")

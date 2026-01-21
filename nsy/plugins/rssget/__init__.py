@@ -13,7 +13,6 @@ from nonebot.log import logger
 from nonebot.rule import to_me
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
-import os
 
 from .functions import rss_get
 from .models_method import DetailManger, SubscribeManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
@@ -42,11 +41,6 @@ R = rss_get()  # 初始化rss类
 config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="INFO",rotation="5 MB", retention="10 days")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
-# 配置项
-REFRESH_TIME = int(os.getenv('REFRESH_TIME', 20))
-MODEL_NAME = os.getenv('MODEL_NAME', "None")
-RSSHUB_HOST = os.getenv('RSSHUB_HOST', "https://rsshub.app")  # RSSHub 实例地址 例如：https://rsshub.app
-
 
 TIMEOUT = 30  # 请求超时时间
 
@@ -201,7 +195,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             plantform_name = await PlantformManger.get_Sign_by_student_id(db_session, plantform)
             url = plantform_name.url
             if_need_trans = int(plantform_name.need_trans)
-            feed_url = f"{RSSHUB_HOST}{url}{userid}"
+            feed_url = f"{config.rsshub_host}{url}{userid}"
             user = await User_name_get(userid)
             username = user.User_Name
 
@@ -237,7 +231,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             trans_msg = [
                                 "📝 翻译：",
                                 content["trans_text"],
-                                f"【翻译由{MODEL_NAME}提供】"
+                                f"【翻译由{config.model_name}提供】"
                             ]
                         # 先发送文字内容
                         await rss_cmd.send("\n".join(msg))
@@ -269,7 +263,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                             trans_msg = [
                                 "📝 翻译：",
                                 content["trans_text"],
-                                f"【翻译由{MODEL_NAME}提供】"
+                                f"【翻译由{config.model_name}提供】"
                             ]
                         # 先发送文字内容
                         await rss_cmd.send("\n".join(msg))
@@ -363,8 +357,7 @@ async def handle_rss(event: GroupMessageEvent):
     async with (get_session() as db_session):
         bot = get_bot()
         group_id = event.group_id
-        SELF_ID = int(os.getenv('SELF_ID', "10001"))
-
+        
         msg = "📋 当前订阅列表：\n"
         sub_list = {}
         try:
@@ -401,7 +394,7 @@ async def handle_rss(event: GroupMessageEvent):
 
                 node1_content = msg
                 node1 = MessageSegment.node_custom(
-                    user_id=SELF_ID,
+                    user_id=config.self_id,
                     nickname="Ksm 初号机",
                     content=node1_content,
                 )
@@ -506,7 +499,6 @@ async def handle_rss(event: GroupMessageEvent):
     async with (get_session() as db_session):
         bot = get_bot()
         group_id = event.group_id
-        SELF_ID = int(os.getenv('SELF_ID', "10001"))
         msg = "📋 当前可访问用户列表：\n"
         try:
             flag = await UserManger.is_database_empty(db_session)
@@ -523,14 +515,14 @@ async def handle_rss(event: GroupMessageEvent):
 
                 node1_content = msg
                 node1 = MessageSegment.node_custom(
-                    user_id=SELF_ID,
+                    user_id=config.self_id,
                     nickname="Ksm 初号机",
                     content=node1_content,
                 )
 
                 node2_content = "如需增加新用户，请联系管理员，或发邮件至：public@tano.asia"
                 node2 = MessageSegment.node_custom(
-                    user_id=SELF_ID,
+                    user_id=config.self_id,
                     nickname="Ksm 初号机",
                     content=node2_content,
                 )
@@ -606,7 +598,6 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     logger.info(f"从群 {event.group_id} 发起List请求")
     bot = get_bot()
     group_id = event.group_id
-    SELF_ID = int(os.getenv('SELF_ID', "10001"))
     userid = args.extract_plain_text().strip()
     sheet1 = await User_get()
     if not userid:
@@ -620,7 +611,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             plantform_name = await PlantformManger.get_Sign_by_student_id(db_session, plantform)
             url = plantform_name.url
             if_need_trans = int(plantform_name.need_trans)
-            feed_url = f"{RSSHUB_HOST}{url}{userid}"
+            feed_url = f"{config.rsshub_host}{url}{userid}"
             user = await User_name_get(userid)
             username = user.User_Name
 
@@ -648,7 +639,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
             node1_content = msg
             node1 = MessageSegment.node_custom(
-                user_id=SELF_ID,
+                user_id=config.self_id,
                 nickname="Ksm 初号机",
                 content=node1_content,
             )
@@ -724,17 +715,16 @@ async def handle_rss(event: GroupMessageEvent):
     """
     bot = get_bot()
     group_id = event.group_id
-    SELF_ID = int(os.getenv('SELF_ID', "10001"))
     node1_content = Message(config.help_msg_1)
     node1 = MessageSegment.node_custom(
-        user_id=SELF_ID,
+        user_id=config.self_id,
         nickname="Ksm 初号机",
         content=node1_content,
     )
 
     node2_content = Message(config.help_msg_2)
     node2 = MessageSegment.node_custom(
-        user_id=SELF_ID,
+        user_id=config.self_id,
         nickname="Ksm 初号机",
         content=node2_content,  # content 是一个 Message 对象
     )
@@ -849,7 +839,7 @@ async def refresh_():
 
 
 #定时任务，发送最新推文
-@scheduler.scheduled_job(CronTrigger(minute=f"*/{REFRESH_TIME}"),misfire_grace_time=60)
+@scheduler.scheduled_job(CronTrigger(minute=f"*/{config.refresh_time}"),misfire_grace_time=60)
 async def auto_update_func():
     """
     定时向订阅群组发送推文

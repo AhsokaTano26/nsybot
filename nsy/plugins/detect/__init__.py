@@ -1,4 +1,3 @@
-import os
 from nonebot import get_plugin_config, require, logger, get_driver, get_bot
 from nonebot.plugin import PluginMetadata
 import requests
@@ -12,7 +11,6 @@ __plugin_meta__ = PluginMetadata(
     usage="",
     config=Config,
 )
-URL = os.getenv('URL', "None")
 
 plugin_config = get_plugin_config(Config)
 
@@ -29,7 +27,7 @@ async def detect():
         # 构造回复消息
         if is_online and is_good:
             logger.info("🟢 **OneBot 客户端运行良好，Bot 在线。**")
-            requests.get(URL)
+            requests.get(plugin_config.detect_url)
             logger.info("成功发送请求")
         elif is_online and not is_good:
             logger.warning("🟡 Bot 在线，但客户端状态可能存在异常（Good: False）。")

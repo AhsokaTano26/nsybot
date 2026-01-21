@@ -1,11 +1,25 @@
 from pydantic import BaseModel
-from nonebot import get_driver  # 导入 get_driver 函数，用于获取 NoneBot 驱动器
 
 
 class Config(BaseModel):
     """Plugin Config Here"""
-    ignored_groups: list[int] = [200214779, 210146004,524239640,925265706,929711368]
+    # 基础配置
+    ignored_groups: list[int] = [200214779, 210146004, 524239640, 925265706, 929711368]
     if_first_time_start: bool = True
+
+    # RSSHub 配置
+    rsshub_host: str = "https://rsshub.app"
+    rsshub_host_back: str | None = None
+
+    # 翻译/AI 配置
+    api_key: str | None = None
+    secret_key: str | None = None
+    model_name: str = "deepseek-chat"
+
+    # 其他配置
+    refresh_time: int = 20
+    self_id: int = 10001
+    ut_url: str = "None"
     help_msg_1: str = """nsy 推文助手：订阅三步走
 ——————
 想让机器人自动转发推特/b站？请按以下顺序操作：
@@ -64,5 +78,3 @@ https://github.com/AhsokaTano26/nsybot"""
 即：1 0 1 1 0
 ——————"""
 
-# 从 NoneBot 驱动器的配置字典中解析配置对象
-Config = Config.parse_obj(get_driver().config.dict())
