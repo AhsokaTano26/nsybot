@@ -1,9 +1,8 @@
 import feedparser
 import requests
 import httpx
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
-from bs4 import BeautifulSoup
 from nonebot import get_bot, get_plugin_config
 from nonebot.adapters.onebot.v11 import MessageSegment, Message
 from nonebot.log import logger
@@ -16,7 +15,7 @@ from .get_id import get_id
 from .update_text import get_text
 from .update_text import update_text
 from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
-from .translation import BaiDu, Ollama, Ali, DeepSeek
+from .format_json import Format
 from .config import Config
 
 
@@ -32,62 +31,7 @@ async def User_name_get(id):
 
 # 配置项
 TIMEOUT = 30  # 请求超时时间
-MAX_IMAGES = 10  # 最多发送图片数量
 config = get_plugin_config(Config)
-
-
-
-async def extract_content(entry,if_need_trans) -> dict:
-    """提取推文内容结构化数据"""
-
-    B = DeepSeek()  # 初始化DeepSeek翻译类
-    # B = Ali()  # 初始化阿里翻译类
-    # B = BaiDu()  # 初始化百度翻译类
-    # B = Ollama() # 初始化Ollama翻译类
-
-    publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
-    dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
-    # 增加指定小时
-    new_dt = dt + timedelta(hours=8)
-    # 格式化为字符串
-    published = new_dt.strftime("%Y-%m-%d %H:%M")
-
-    # 清理文本内容
-    await if_trans(entry)
-    clean_text_old = await remove_html_tag_soup(entry.description)
-    clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
-    if if_need_trans == 1:
-        trans_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n") #为翻译段落划分
-        trans_text1 = B.main(trans_text)
-        trans_text = trans_text1.replace("+", "\n")
-    else:
-        trans_text = None
-
-    # 提取图片（优先媒体内容）
-    images = []
-    for media in getattr(entry, "media_content", []):
-        if media.get("type", "").startswith("image/"):
-            images.append(media["url"])
-
-    # 如果媒体内容为空，尝试从附件获取
-    if not images:
-        for enc in getattr(entry, "enclosures", []):
-            if enc.get("type", "").startswith("image/"):
-                images.append(enc.href)
-
-    if hasattr(entry, 'description'):
-        soup = BeautifulSoup(entry.description, 'html.parser')
-        for img in soup.find_all('img', src=True):
-            images.append(img['src'])
-
-    return {
-        "title": entry.title or None,
-        "time": published or None,
-        "link": entry.link or None,
-        "text": clean_text or None,
-        "trans_text": trans_text or None,
-        "images": images[:MAX_IMAGES]
-    }
 
 async def fetch_feed(url: str) -> dict:
     """异步获取并解析RSS内容"""
@@ -216,7 +160,7 @@ class rss_get():
     async def handle_merge_send(group_id, msg, trans_msg, content):
         bot = get_bot()
         # --- 1. 准备节点内容 ---
-        
+
         forward_nodes = []
 
         # 节点 1：原文
@@ -379,7 +323,7 @@ class rss_get():
                                         if existing_lanmsg:  # 更新记录
                                             logger.info(f"{id_with_group}已发送")
                                         else:
-                                            content = await extract_content(latest, if_need_trans)
+                                            content = await Format().extract_content(latest, if_need_trans)
                                             content["username"] = username
                                             content["id"] = trueid
                                             await update_text(content)

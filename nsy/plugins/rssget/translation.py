@@ -21,7 +21,7 @@ class BaiDu:
     """
     调用百度机器翻译API进行翻译操作
     """
-    def main(self, body=str):
+    async def main(self, body=str):
         url = "https://aip.baidubce.com/rpc/2.0/mt/texttrans/v1?access_token=" + self.get_access_token()
 
         payload = json.dumps({

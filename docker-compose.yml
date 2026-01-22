@@ -6,6 +6,7 @@ x-config-port: &config-port ${PORT:-12035}
 services:
   nonebot:
     build: .
+    image: tano/nsybot:latest
     ports:
       - *config-port
     env_file:
