@@ -146,3 +146,4 @@ dmypy.json
 /data/*
 
 .env.dev
+.env.prod
