@@ -287,7 +287,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
 rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,rule=ignore_group)
 rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,rule=ignore_group)
-rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,rule=ignore_group)
+rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,permission=SUPERUSER, rule=ignore_group)
 
 @rss_sub.handle()
 async def handle_rss(args: Message = CommandArg()):
@@ -516,8 +516,8 @@ async def handle_rss(event: GroupMessageEvent):
                 all = await UserManger.get_all_student_id(db_session)
                 for id in all:
                     data1 = await UserManger.get_Sign_by_student_id(db_session, id)
-                    username = data1.User_ID
-                    user_id = data1.User_Name
+                    username = data1.User_Name
+                    user_id = data1.User_ID
                     msg += f"用户名: {username}\n"
                     msg += f" 用户ID: {user_id}\n"
 
@@ -551,7 +551,7 @@ async def handle_rss(event: GroupMessageEvent):
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-find = on_command("查询", priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN, rule=ignore_group)
+find = on_command("查询", priority=10, permission=SUPERUSER, rule=ignore_group)
 @find.handle()
 async def handle_rss(args: Message = CommandArg()):
     """
