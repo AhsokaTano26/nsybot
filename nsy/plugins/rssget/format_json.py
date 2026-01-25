@@ -1,13 +1,14 @@
 import os
 from datetime import datetime, timedelta
+
 from bs4 import BeautifulSoup
 
-from .models_method import DetailManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
 from .get_id import get_id
-from .update_text import get_text
-from .update_text import update_text
-from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
-from .translation import BaiDu, Ollama, Ali, DeepSeek
+from .models_method import (ContentManager, DetailManager, GroupconfigManager,
+                            PlantformManager, UserManager)
+from .trans_msg import if_self_trans, if_trans, remove_html_tag_soup
+from .translation import Ali, BaiDu, DeepSeek, Ollama
+from .update_text import get_text, update_text
 
 MODEL_NAME = os.getenv('MODEL_NAME', None)
 TRANS_PLATFORM = int(os.getenv('TRANS_PLATFORM', 0))

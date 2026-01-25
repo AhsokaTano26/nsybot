@@ -1,32 +1,33 @@
-import feedparser
-import requests
-import httpx
-from datetime import datetime
 import time
+from datetime import datetime
+from typing import List
+
+import feedparser
+import httpx
+import requests
 from nonebot import get_bot, get_plugin_config
-from nonebot.adapters.onebot.v11 import MessageSegment, Message
+from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
-from typing import List
 
-from .models_method import DetailManger, UserManger, ContentManger, PlantformManger, GroupconfigManger
-from .get_id import get_id
-from .update_text import get_text
-from .update_text import update_text
-from .trans_msg import if_trans, if_self_trans, remove_html_tag_soup
-from .format_json import Format
 from .config import Config
+from .format_json import Format
+from .get_id import get_id
+from .models_method import (ContentManager, DetailManager, GroupconfigManager,
+                            PlantformManager, UserManager)
+from .trans_msg import if_self_trans, if_trans, remove_html_tag_soup
+from .update_text import get_text, update_text
 
 
 async def User_get():
     async with (get_session() as db_session):
-        sheet1 = await UserManger.get_all_student_id(db_session)
+        sheet1 = await UserManager.get_all_student_id(db_session)
         return sheet1
 
 async def User_name_get(id):
     async with (get_session() as db_session):
-        sheet1 = await UserManger.get_Sign_by_student_id(db_session,id)
+        sheet1 = await UserManager.get_Sign_by_student_id(db_session,id)
         return sheet1
 
 # 配置项
@@ -88,7 +89,7 @@ class rss_get():
             bot = get_bot()
             if_need_trans = True if if_need_trans == 1 else False #文章来源平台是否需要翻译
             try:
-                group_config = await GroupconfigManger.get_Sign_by_group_id(db_session, group_id)
+                group_config = await GroupconfigManager.get_Sign_by_group_id(db_session, group_id)
                 if group_config:
                     if_need_user_trans = group_config.if_need_trans
                     if_need_self_trans = group_config.if_need_self_trans
@@ -219,9 +220,9 @@ class rss_get():
         async with (get_session() as db_session):
             sheet1 = await User_get()
             if userid in sheet1:
-                plantform = await UserManger.get_Sign_by_student_id(db_session,userid)
+                plantform = await UserManager.get_Sign_by_student_id(db_session,userid)
                 plantform = plantform.Plantform
-                plantform_name = await PlantformManger.get_Sign_by_student_id(db_session,plantform)
+                plantform_name = await PlantformManager.get_Sign_by_student_id(db_session,plantform)
                 url = plantform_name.url
                 if_need_trans = int(plantform_name.need_trans)
                 feed_url = f"{config.rsshub_host}{url}{userid}"
@@ -275,21 +276,21 @@ class rss_get():
                             if_is_self_trans = await if_self_trans(username,latest)
                             if_is_trans = await if_trans(latest)
                             try:
-                                existing_lanmsg = await ContentManger.get_Sign_by_student_id(
+                                existing_lanmsg = await ContentManager.get_Sign_by_student_id(
                                     db_session, trueid)
                                 if existing_lanmsg:  # 本地数据库是否有推文内容
                                     logger.info(f"该 {trueid} 推文本地已存在")
                                     content = await get_text(trueid)
                                     try:
                                         # 检查数据库中是否已存在该 id 的记录
-                                        existing_lanmsg = await DetailManger.get_Sign_by_student_id(
+                                        existing_lanmsg = await DetailManager.get_Sign_by_student_id(
                                             db_session, id_with_group)
                                         if existing_lanmsg:  # 更新记录
                                             logger.info(f"{id_with_group} 已发送")
                                         else:
                                             try:
                                                 # 写入数据库
-                                                await DetailManger.create_signmsg(
+                                                await DetailManager.create_signmsg(
                                                     db_session,
                                                     id=id_with_group,
                                                     summary=content['text'],
@@ -318,7 +319,7 @@ class rss_get():
                                     logger.info(f"该 {trueid} 推文本地不存在")
                                     try:
                                         # 检查数据库中是否已存在该 id 的记录
-                                        existing_lanmsg = await DetailManger.get_Sign_by_student_id(
+                                        existing_lanmsg = await DetailManager.get_Sign_by_student_id(
                                             db_session, id_with_group)
                                         if existing_lanmsg:  # 更新记录
                                             logger.info(f"{id_with_group}已发送")
@@ -329,7 +330,7 @@ class rss_get():
                                             await update_text(content)
                                             try:
                                                 # 写入数据库
-                                                await DetailManger.create_signmsg(
+                                                await DetailManager.create_signmsg(
                                                     db_session,
                                                     id=id_with_group,
                                                     summary=content['text'],

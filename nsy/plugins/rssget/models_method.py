@@ -1,11 +1,13 @@
 from typing import Optional
-from sqlalchemy import text
+
 from nonebot_plugin_orm import async_scoped_session
-from sqlalchemy import select
-from .models import Detail , Subscribe, User, Content, Plantform, Groupconfig # 导入你的模型定义
+from sqlalchemy import select, text
+
+from .models import (Content, Detail, Groupconfig, Plantform,  # 导入你的模型定义
+                     Subscribe, User)
 
 
-class DetailManger:
+class DetailManager:
     @classmethod
     async def get_all_student_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
@@ -32,12 +34,30 @@ class DetailManger:
         return new_signmsg
 
 
-class SubscribeManger:
+class SubscribeManager:
     @classmethod
     async def get_all_student_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
         result = await session.execute(select(Subscribe.id))
         return {row[0] for row in result}
+
+    @classmethod
+    async def get_all_subscriptions(cls, session: async_scoped_session) -> list[Subscribe]:
+        """获取所有订阅记录"""
+        result = await session.execute(select(Subscribe))
+        return list(result.scalars().all())
+
+    @classmethod
+    async def get_subscriptions_by_group(cls, session: async_scoped_session, group_id: str) -> list[Subscribe]:
+        """根据群组ID获取所有订阅"""
+        result = await session.execute(select(Subscribe).where(Subscribe.group == group_id))
+        return list(result.scalars().all())
+
+    @classmethod
+    async def get_subscriptions_by_username(cls, session: async_scoped_session, username: str) -> list[Subscribe]:
+        """根据用户名获取所有订阅"""
+        result = await session.execute(select(Subscribe).where(Subscribe.username == username))
+        return list(result.scalars().all())
 
     @classmethod
     async def get_Sign_by_student_id(cls, session: async_scoped_session, student_id: str) -> Optional[Subscribe]:
@@ -69,12 +89,26 @@ class SubscribeManger:
         return False
 
 
-class UserManger:
+class UserManager:
     @classmethod
     async def get_all_student_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
         result = await session.execute(select(User.User_ID))
         return {row[0] for row in result}
+
+    @classmethod
+    async def get_all_users(cls, session: async_scoped_session) -> list[User]:
+        """获取所有用户记录"""
+        result = await session.execute(select(User))
+        return list(result.scalars().all())
+
+    @classmethod
+    async def get_users_by_ids(cls, session: async_scoped_session, user_ids: list[str]) -> dict[str, User]:
+        """根据用户ID列表批量获取用户，返回 {user_id: User} 字典"""
+        if not user_ids:
+            return {}
+        result = await session.execute(select(User).where(User.User_ID.in_(user_ids)))
+        return {user.User_ID: user for user in result.scalars().all()}
 
     @classmethod
     async def get_Sign_by_student_id(cls, session: async_scoped_session, student_id: str) -> Optional[User]:
@@ -105,7 +139,7 @@ class UserManger:
         await session.commit()
         return new_signmsg
 
-class PlantformManger:
+class PlantformManager:
     @classmethod
     async def get_all_student_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
@@ -141,7 +175,7 @@ class PlantformManger:
         await session.commit()
         return new_signmsg
 
-class ContentManger:
+class ContentManager:
     @classmethod
     async def get_all_student_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
@@ -167,7 +201,7 @@ class ContentManger:
         await session.commit()
         return new_signmsg
 
-class GroupconfigManger:
+class GroupconfigManager:
     @classmethod
     async def get_all_group_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
