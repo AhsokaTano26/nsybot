@@ -102,7 +102,7 @@ class rss_get():
                     if_need_self_trans = False
                     if_need_translate = True
                     if_need_photo_num_mention = True
-                    if_need_merged_message = False
+                    if_need_merged_message = True
                     logger.opt(exception=False).info(f"使用默认群组配置")
             except SQLAlchemyError:
                 logger.opt(exception=False).error(f"数据库错误")
@@ -110,7 +110,7 @@ class rss_get():
                 if_need_self_trans = False
                 if_need_translate = True
                 if_need_photo_num_mention = True
-                if_need_merged_message = False
+                if_need_merged_message = True
                 logger.opt(exception=False).info(f"使用默认群组配置")
 
             if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):

@@ -287,15 +287,11 @@ rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permi
 rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,rule=ignore_group)
 
 @rss_sub.handle()
-async def handle_rss(args: Message = CommandArg()):
+async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     username = str(command.split(" ")[0])
-    group_id = str(command.split(" ")[1])
-    try:
-        group_id = int(group_id)
-        group_id = str(group_id)
-    except:
-        await rss_sub.finish("群号格式错误")
+    group_id = str(event.group_id)
+
     sheet1 = await User_get()
     if username not in sheet1:
         await rss_sub.finish(f"用户名 {username} 不在可访问列表中")
@@ -319,7 +315,7 @@ async def handle_rss(args: Message = CommandArg()):
                     )
                     await rss_sub.send(
                         f"✅ 订阅成功\n"
-                        f"用户名: {username}\n"
+                        f"用户ID: {username}\n"
                         f"推送群组: {group_id}\n"
                     )
                 except Exception as e:
@@ -328,10 +324,10 @@ async def handle_rss(args: Message = CommandArg()):
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 @rss_unsub.handle()
-async def handle_rss(args: Message = CommandArg()):
+async def handle_rss(event: GroupMessageEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     username = str(command.split(" ")[0])
-    group_id = str(command.split(" ")[1])
+    group_id = str(event.group_id)
     true_id = username + "-" + group_id
     async with (get_session() as db_session):
         try:
@@ -347,7 +343,7 @@ async def handle_rss(args: Message = CommandArg()):
                     await SubscribeManager.delete_id(db_session,id=true_id)
                     await rss_unsub.send(
                         f"✅ 订阅取消成功\n"
-                        f"用户名: {username}\n"
+                        f"用户ID: {username}\n"
                         f"推送群组: {group_id}\n"
                     )
                 except Exception as e:
@@ -501,6 +497,8 @@ async def handle_rss(event: GroupMessageEvent):
     async with (get_session() as db_session):
         bot = get_bot()
         group_id = event.group_id
+        msg = ("📋 当前可访问用户列表：\n"
+               "用户名(用户ID)\n")
         try:
             flag = await UserManager.is_database_empty(db_session)
             if flag:
