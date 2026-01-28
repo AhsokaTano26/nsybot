@@ -1,6 +1,5 @@
 import time
 from datetime import datetime, timedelta
-
 import feedparser
 import httpx
 from apscheduler.triggers.cron import CronTrigger
@@ -46,6 +45,7 @@ logger.add("data/log/info_log.txt", level="INFO",rotation="5 MB", retention="10 
 logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 
 TIMEOUT = 30  # 请求超时时间
+MAX_CHAR_PER_NODE = 2000
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
@@ -381,30 +381,45 @@ async def handle_rss(event: GroupMessageEvent):
 
                 # 构建消息
                 msg_parts = ["📋 当前订阅列表：\n"]
+                forward_nodes = []
                 for user in sub_list:
                     msg_parts.append("\n")
                     user_detail = users_dict.get(user)
                     user_name = user_detail.User_Name if user_detail else "未知"
+
+                    entry = f"\n用户ID: {user}\n用户名: {user_name}\n"
                     msg_parts.append(f"用户ID: {user}\n")
                     msg_parts.append(f"用户名: {user_name}\n")
                     for group in sub_list[user]:
-                        msg_parts.append(f"    推送群组: {group}\n")
+                        entry += f"    推送群组: {group}\n"
 
-                node1_content = "".join(msg_parts)
-                node1 = MessageSegment.node_custom(
-                    user_id=config.self_id,
-                    nickname="Ksm 初号机",
-                    content=node1_content,
-                )
+                    if len(msg_buffer) + len(entry) > MAX_CHAR_PER_NODE:
+                        forward_nodes.append(
+                            MessageSegment.node_custom(
+                                user_id=config.self_id,
+                                nickname="Ksm 初号机",
+                                content=msg_buffer
+                            )
+                        )
+                        msg_buffer = "📋 订阅列表 (续)：\n" + entry  # 重置缓冲区
+                    else:
+                        msg_buffer += entry
 
-                forward_nodes = [node1]
+                if msg_buffer:
+                    forward_nodes.append(
+                        MessageSegment.node_custom(
+                            user_id=config.self_id,
+                            nickname="Ksm 初号机",
+                            content=msg_buffer
+                        )
+                    )
 
                 # 将节点列表转换为一个包含所有转发节点的 Message 对象
                 forward_message = Message(forward_nodes)
 
                 try:
                     # 发送合并打包消息
-                    await bot.send_group_msg(group_id=group_id, message=forward_message)
+                    await bot.send_forward_msg(group_id=group_id, message=forward_message)
                     logger.info(f"发送群 {group_id} 合并转发消息成功")
                 except Exception as e:
                     logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
@@ -507,8 +522,7 @@ async def handle_rss(event: GroupMessageEvent):
                 all_users = await UserManager.get_all_users(db_session)
                 msg_parts = ["📋 当前可访问用户列表：\n"]
                 for user in all_users:
-                    msg_parts.append(f"用户名: {user.User_Name}\n")
-                    msg_parts.append(f" 用户ID: {user.User_ID}\n")
+                    msg_parts.append(f"{user.User_Name}({user.User_ID})\n")
 
                 node1_content = "".join(msg_parts)
                 node1 = MessageSegment.node_custom(
