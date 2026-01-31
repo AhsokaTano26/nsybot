@@ -1,5 +1,6 @@
 import time
 from datetime import datetime, timedelta
+
 import feedparser
 import httpx
 from apscheduler.triggers.cron import CronTrigger
@@ -10,6 +11,7 @@ from nonebot.adapters.onebot.v11 import (GROUP_ADMIN, GROUP_OWNER,
                                          MessageSegment)
 from nonebot.log import logger
 from nonebot.params import CommandArg
+from nonebot.exception import FinishedException
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import to_me
@@ -18,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .config import Config
 from .encrypt import encrypt
+from .following_import import fetch_and_match
 from .functions import rss_get
 from .get_id import get_id
 from .models import Detail
@@ -592,6 +595,258 @@ async def handle_rss(args: Message = CommandArg()):
                 logger.opt(exception=False).error(f"数据库操作错误: {e}")
         else:
             await find.finish("请输入正确的命令")
+
+
+# ==================== 导入关注功能 ====================
+import_following = on_command(
+    "import_following",
+    aliases={"导入关注"},
+    priority=10,
+    permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,
+    rule=ignore_group
+)
+
+# 存储待确认的批量订阅 {group_id: [matched_users]}
+pending_batch_subscribe: dict[int, list[str]] = {}
+
+
+@import_following.handle()
+async def handle_import_following(event: GroupMessageEvent, args: Message = CommandArg()):
+    """
+    导入X关注列表并匹配可订阅用户
+
+    用法: 导入关注 <auth_token> <ct0> <x用户名>
+
+    获取凭据方法:
+    1. 登录 X (twitter.com)
+    2. 打开浏览器开发者工具 (F12)
+    3. 在 Application > Cookies 中找到 auth_token 和 ct0
+    """
+    command = args.extract_plain_text().strip()
+    parts = command.split()
+
+    if len(parts) < 3:
+        await import_following.finish(
+            "📖 用法: 导入关注 <auth_token> <ct0> <x用户名>\n\n"
+            "获取凭据方法:\n"
+            "1. 登录 X (twitter.com)\n"
+            "2. 打开浏览器开发者工具 (F12)\n"
+            "3. 切换到 Application 标签\n"
+            "4. 在 Cookies > twitter.com 中找到:\n"
+            "   - auth_token\n"
+            "   - ct0\n\n"
+            "⚠️ 注意: 凭据为敏感信息，建议在私聊中使用此命令"
+        )
+
+    auth_token = parts[0]
+    ct0 = parts[1]
+    screen_name = parts[2]
+    group_id = event.group_id
+
+    await import_following.send(f"🔄 正在获取 @{screen_name} 的关注列表，请稍候...")
+
+    try:
+        # 获取数据库中可订阅的用户列表
+        available_users = await User_get()
+
+        if not available_users:
+            await import_following.finish("❌ 当前无可订阅用户")
+
+        # 获取关注列表并匹配
+        matched_users, fetched_count, total_count = await fetch_and_match(
+            auth_token=auth_token,
+            ct0=ct0,
+            screen_name=screen_name,
+            available_users=available_users,
+            max_fetch=1000  # 限制最多获取1000个关注
+        )
+
+        if not matched_users:
+            await import_following.finish(
+                f"📊 已扫描 {fetched_count}/{total_count} 个关注\n"
+                f"❌ 未找到匹配的可订阅用户"
+            )
+
+        # 检查哪些用户已经订阅
+        async with get_session() as db_session:
+            already_subscribed = []
+            not_subscribed = []
+
+            for user_id in matched_users:
+                true_id = f"{user_id}-{group_id}"
+                existing = await SubscribeManager.get_Sign_by_student_id(db_session, true_id)
+                if existing:
+                    already_subscribed.append(user_id)
+                else:
+                    not_subscribed.append(user_id)
+
+        # 构建结果消息
+        msg_parts = [
+            f"📊 扫描完成 ({fetched_count}/{total_count} 个关注)\n",
+            f"✅ 匹配到 {len(matched_users)} 个可订阅用户\n\n"
+        ]
+
+        if already_subscribed:
+            msg_parts.append(f"📌 已订阅 ({len(already_subscribed)}):\n")
+            msg_parts.append("  " + ", ".join(already_subscribed[:10]))
+            if len(already_subscribed) > 10:
+                msg_parts.append(f" ... 等{len(already_subscribed)}个")
+            msg_parts.append("\n\n")
+
+        if not_subscribed:
+            msg_parts.append(f"🆕 可新增订阅 ({len(not_subscribed)}):\n")
+            for i, user_id in enumerate(not_subscribed, 1):
+                msg_parts.append(f"  [{i}] {user_id}\n")
+
+            # 保存待确认列表
+            pending_batch_subscribe[group_id] = not_subscribed
+
+            msg_parts.append(f"\n💡 回复 \"确认订阅\" 一键订阅以上 {len(not_subscribed)} 个用户")
+            msg_parts.append("\n💡 或回复 \"订阅编号 1 3 5\" 选择性订阅")
+        else:
+            msg_parts.append("✨ 所有匹配用户均已订阅")
+
+        await import_following.finish("".join(msg_parts))
+
+    except FinishedException:
+        raise  # 让 FinishedException 正常传播
+    except Exception as e:
+        logger.opt(exception=True).error(f"导入关注失败: {e}")
+        await import_following.finish(f"❌ 导入失败: {str(e)}")
+
+
+# 确认批量订阅
+confirm_batch_sub = on_command(
+    "确认订阅",
+    priority=10,
+    permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,
+    rule=ignore_group
+)
+
+
+@confirm_batch_sub.handle()
+async def handle_confirm_batch_sub(event: GroupMessageEvent):
+    """确认批量订阅待确认列表中的所有用户"""
+    group_id = event.group_id
+
+    if group_id not in pending_batch_subscribe or not pending_batch_subscribe[group_id]:
+        await confirm_batch_sub.finish("❌ 没有待确认的订阅，请先使用 \"导入关注\" 命令")
+
+    users_to_subscribe = pending_batch_subscribe[group_id]
+    success_count = 0
+    fail_count = 0
+
+    async with get_session() as db_session:
+        for user_id in users_to_subscribe:
+            true_id = f"{user_id}-{group_id}"
+            try:
+                existing = await SubscribeManager.get_Sign_by_student_id(db_session, true_id)
+                if not existing:
+                    await SubscribeManager.create_signmsg(
+                        db_session,
+                        id=true_id,
+                        username=user_id,
+                        group=str(group_id),
+                    )
+                    success_count += 1
+                else:
+                    success_count += 1  # 已存在也算成功
+            except Exception as e:
+                logger.error(f"批量订阅 {user_id} 失败: {e}")
+                fail_count += 1
+
+    # 清除待确认列表
+    del pending_batch_subscribe[group_id]
+
+    await confirm_batch_sub.finish(
+        f"✅ 批量订阅完成\n"
+        f"成功: {success_count} 个\n"
+        f"失败: {fail_count} 个"
+    )
+
+
+# 按编号订阅
+sub_by_index = on_command(
+    "订阅编号",
+    priority=10,
+    permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,
+    rule=ignore_group
+)
+
+
+@sub_by_index.handle()
+async def handle_sub_by_index(event: GroupMessageEvent, args: Message = CommandArg()):
+    """按编号订阅待确认列表中的用户"""
+    group_id = event.group_id
+
+    if group_id not in pending_batch_subscribe or not pending_batch_subscribe[group_id]:
+        await sub_by_index.finish("❌ 没有待确认的订阅，请先使用 \"导入关注\" 命令")
+
+    command = args.extract_plain_text().strip()
+    if not command:
+        await sub_by_index.finish("📖 用法: 订阅编号 1 3 5 或 订阅编号 1-10")
+
+    users_list = pending_batch_subscribe[group_id]
+
+    # 解析编号
+    indices = set()
+    for part in command.split():
+        if "-" in part:
+            # 范围格式: 1-5
+            try:
+                start, end = map(int, part.split("-"))
+                indices.update(range(start, end + 1))
+            except ValueError:
+                continue
+        else:
+            # 单个编号
+            try:
+                indices.add(int(part))
+            except ValueError:
+                continue
+
+    # 过滤有效编号
+    valid_indices = [i for i in indices if 1 <= i <= len(users_list)]
+    if not valid_indices:
+        await sub_by_index.finish(f"❌ 无效的编号，有效范围: 1-{len(users_list)}")
+
+    # 获取对应用户
+    users_to_subscribe = [users_list[i - 1] for i in sorted(valid_indices)]
+
+    success_count = 0
+    fail_count = 0
+    subscribed_users = []
+
+    async with get_session() as db_session:
+        for user_id in users_to_subscribe:
+            true_id = f"{user_id}-{group_id}"
+            try:
+                existing = await SubscribeManager.get_Sign_by_student_id(db_session, true_id)
+                if not existing:
+                    await SubscribeManager.create_signmsg(
+                        db_session,
+                        id=true_id,
+                        username=user_id,
+                        group=str(group_id),
+                    )
+                success_count += 1
+                subscribed_users.append(user_id)
+            except Exception as e:
+                logger.error(f"订阅 {user_id} 失败: {e}")
+                fail_count += 1
+
+    # 从待确认列表中移除已订阅的用户
+    pending_batch_subscribe[group_id] = [
+        u for u in users_list if u not in subscribed_users
+    ]
+    if not pending_batch_subscribe[group_id]:
+        del pending_batch_subscribe[group_id]
+
+    await sub_by_index.finish(
+        f"✅ 订阅完成\n"
+        f"成功: {success_count} 个 ({', '.join(subscribed_users)})\n"
+        f"失败: {fail_count} 个"
+    )
 
 
 list = on_command("list", aliases={"文章列表"}, priority=10,rule=ignore_group)
