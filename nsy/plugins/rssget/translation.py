@@ -110,27 +110,11 @@ class Ali:
         return params
 
     @staticmethod
-    def main(text: str):
+    async def main(text: str):
         """
-        同步调用
+        异步调用
         """
-        client = Ali.create_client()
-        params = Ali.create_api_info()
-        # body params
-        body = {}
-        body['FormatType'] = 'text'
-        body['SourceLanguage'] = 'auto'
-        body['TargetLanguage'] = 'zh'
-        body['SourceText'] = text
-        body['Scene'] = 'general'
-        # runtime options
-        runtime = util_models.RuntimeOptions()
-        request = open_api_models.OpenApiRequest(
-            body=body
-        )
-        # 返回值实际为 Map 类型，可从 Map 中获得三类数据：响应体 body、响应头 headers、HTTP 返回的状态码 statusCode。
-        response = client.call_api(params, request, runtime)
-        return response['body']['Data']['Translated']
+        return await Ali.main_async(text)
 
     @staticmethod
     async def main_async(text: str):
@@ -157,7 +141,7 @@ class Ali:
 
 
 class DeepSeek:
-    def main(self,text):
+    async def main(self, text):
         cfg = get_config()
         client = OpenAI(
             api_key=cfg.api_key,
@@ -168,7 +152,7 @@ class DeepSeek:
             messages=[
                 {
                     "role": "system",
-                    "content": f"你是一名专业的翻译助手，请将用户输入的内容准确翻译成中文，不要添加任何额外解释。"
+                    "content": "你是一名专业的翻译助手，请将用户输入的内容准确翻译成中文，不要添加任何额外解释。"
                 },
                 {
                     "role": "user",
@@ -177,7 +161,6 @@ class DeepSeek:
             ],
             stream=False
         )
-        # 3. 提取并返回翻译结果
         translated_text = response.choices[0].message.content
         return translated_text
 
@@ -194,7 +177,7 @@ class Ollama:
         pattern = r'<think>.*?</think>'
         return re.sub(pattern, '', text, flags=re.DOTALL)
 
-    def main(self,text, source_lang="日文", target_lang="中文"):
+    async def main(self, text, source_lang="日文", target_lang="中文"):
         """
         使用 Ollama 进行翻译
 
