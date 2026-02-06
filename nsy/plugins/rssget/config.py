@@ -14,7 +14,7 @@ class Config(BaseModel):
     # 翻译/AI 配置
     api_key: str | None = None
     secret_key: str | None = None
-    model_name: str = "deepseek-chat"
+    model_name: str | None = None
 
     # 其他配置
     refresh_time: int = 20

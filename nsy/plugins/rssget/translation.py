@@ -170,7 +170,7 @@ class Ollama:
     """
     调用本地部署ollama进行翻译
     """
-    def remove_think_tags(self,text):
+    async def remove_think_tags(self,text):
         """
         移除文本中 <think> 和 </think> 标签及其之间的内容
         """
@@ -205,7 +205,7 @@ class Ollama:
             response = requests.post(url, json=payload)
             response.raise_for_status()
             a = response.json()["response"].strip()
-            return self.remove_think_tags(a)
+            return await self.remove_think_tags(a)
         except Exception as e:
             print(f"翻译出错: {e}")
             return "翻译失败"

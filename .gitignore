@@ -147,3 +147,5 @@ dmypy.json
 
 .env.dev
 .env.prod
+/deepseek.py
+/ollama_get_model.py

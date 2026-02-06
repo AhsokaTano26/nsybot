@@ -1,10 +1,9 @@
-import time
 from datetime import datetime
 from typing import List
+import asyncio
 
 import feedparser
 import httpx
-import requests
 from nonebot import get_bot, get_plugin_config
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from nonebot.log import logger
@@ -16,7 +15,7 @@ from .format_json import Format
 from .get_id import get_id
 from .models_method import (ContentManager, DetailManager, GroupconfigManager,
                             PlantformManager, UserManager)
-from .trans_msg import if_self_trans, if_trans, remove_html_tag_soup
+from .trans_msg import if_self_trans, if_trans
 from .update_text import get_text, update_text
 
 
@@ -33,21 +32,31 @@ async def User_name_get(id):
 # 配置项
 TIMEOUT = 30  # 请求超时时间
 config = get_plugin_config(Config)
+client = httpx.AsyncClient(timeout=30) # 全局初始化 client
 
 async def fetch_feed(url: str) -> dict:
     """异步获取并解析RSS内容"""
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            time.sleep(5)
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return feedparser.parse(resp.content)
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return feedparser.parse(resp.content)
     except Exception as e:
         logger.opt(exception=False).error(f"RSS请求失败: {str(e)}")
         return {"error": f"获取内容失败: {str(e)}"}
 
 
 class rss_get():
+    @staticmethod
+    async def report_status(status_url):
+        """
+        发送bot状态报告
+        Args: status_url (str): uptime-kuma状态检查url
+        """
+        try:
+            await client.get(status_url)
+        except Exception as e:
+            logger.error(f"状态上报失败: {e}")
+
     async def send_onebot_image(self,img_url: str, group_id, num):
         """OneBot 专用图片发送方法"""
         bot = get_bot()
@@ -234,12 +243,12 @@ class rss_get():
                 if "error" in data:
                     logger.opt(exception=False).error(data["error"])
 
-
+                # RssHub可用性检查
                 if len(data.get("entries")) == 0 or not data.get("entries"):
                     logger.error("该用户暂无动态或不存在,尝试使用备用地址")
                     try:
                         URL = config.ut_url + f"?status=up&msg={plantform_name.name}可能暂时不可用,尝试使用备用地址&ping="
-                        requests.get(URL)
+                        await self.report_status(URL)
                     except Exception as e:
                         logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
 
@@ -251,7 +260,7 @@ class rss_get():
                             logger.error("备用地址该用户暂无动态或不存在")
                             try:
                                 URL = config.ut_url + f"?status=up&msg={plantform_name.name}备用地址可能暂时不可用&ping="
-                                requests.get(URL)
+                                await self.report_status(URL)
                             except Exception as e:
                                 logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
                             return
@@ -260,7 +269,7 @@ class rss_get():
 
                 try:
                     URL = config.ut_url + f"?status=down&msg={plantform_name.name}已恢复正常&ping="
-                    requests.get(URL)
+                    await self.report_status(URL)
                 except Exception as e:
                     logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
 
@@ -362,7 +371,7 @@ class rss_get():
                                 logger.opt(exception=False).error(f"处理 {latest.get('title')} 时发生错误: {e}")
                         except Exception as e:
                             logger.opt(exception=False).error(f"处理 {group_id} 对 {userid} 的订阅时发生错误: {e}")
-                        time.sleep(0.1)
+                        await asyncio.sleep(0.1)
 
     async def change_config(self):
         config.if_first_time_start = False

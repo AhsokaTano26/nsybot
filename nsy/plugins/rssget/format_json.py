@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 from bs4 import BeautifulSoup
+from nonebot import get_plugin_config
 
 from .get_id import get_id
 from .models_method import (ContentManager, DetailManager, GroupconfigManager,
@@ -9,15 +10,18 @@ from .models_method import (ContentManager, DetailManager, GroupconfigManager,
 from .trans_msg import if_self_trans, if_trans, remove_html_tag_soup
 from .translation import Ali, BaiDu, DeepSeek, Ollama
 from .update_text import get_text, update_text
+from .config import Config
 
+config = get_plugin_config(Config)
 MODEL_NAME = os.getenv('MODEL_NAME', None)
-TRANS_PLATFORM = int(os.getenv('TRANS_PLATFORM', 0))
+TRANS_PLATFORM = int(os.getenv('TRANS_PLATFORM', 9))
 
 PLATFORMS = {
     0: DeepSeek(),
     1: Ollama(),
     2: Ali(),
     3: BaiDu(),
+    9: None,
 }
 
 class Format:
@@ -46,8 +50,6 @@ class Format:
         """提取推文内容结构化数据"""
 
         trans = PLATFORMS.get(TRANS_PLATFORM)
-        if not trans:
-            raise ValueError(f"Unsupported platform index: {TRANS_PLATFORM}")
 
         dt = datetime(*entry.published_parsed[:6]) + timedelta(hours=8)
         published = dt.strftime("%Y-%m-%d %H:%M")
@@ -56,12 +58,12 @@ class Format:
         await if_trans(entry)
         clean_text_old = await remove_html_tag_soup(entry.description)
         clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
-        if if_need_trans == 1 and clean_text_old:
+        if if_need_trans == 1 and clean_text_old and trans:
             trans_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n")  # 为翻译段落划分
             trans_text1 = await trans.main(trans_text)
-            trans_text = trans_text1.replace("+", "\n")
+            trans_text_final = trans_text1.replace("+", "\n")
         else:
-            trans_text = None
+            trans_text_final = None
 
         # 提取图片（优先媒体内容）
         images = []
@@ -85,6 +87,6 @@ class Format:
             "time": published or None,
             "link": entry.link or None,
             "text": clean_text or None,
-            "trans_text": trans_text or None,
+            "trans_text": trans_text_final or None,
             "images": images or None,
         }

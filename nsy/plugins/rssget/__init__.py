@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timedelta
-
+import asyncio
 import feedparser
 import httpx
 from apscheduler.triggers.cron import CronTrigger
@@ -18,6 +18,7 @@ from nonebot.rule import to_me
 from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 
+from nsy.plugins.rssget.models import User
 from .config import Config
 from .encrypt import encrypt
 from .following_import import fetch_and_match
@@ -64,7 +65,7 @@ async def User_get() -> set:
         sheet1 = await UserManager.get_all_student_id(db_session)
         return sheet1
 
-async def User_name_get(id) -> set:
+async def User_name_get(id) -> User | None:
     async with (get_session() as db_session):
         sheet1 = await UserManager.get_Sign_by_student_id(db_session,id)
         return sheet1
@@ -986,7 +987,7 @@ async def handle_rss(event: GroupMessageEvent):
     node2 = MessageSegment.node_custom(
         user_id=config.self_id,
         nickname="Ksm 初号机",
-        content=node2_content,  # content 是一个 Message 对象
+        content=node2_content,
     )
 
     forward_message_nodes = [node1, node2]
@@ -1040,6 +1041,9 @@ async def signal_on_():
     await signal_on.finish(if_first_time_start)
 
 async def refresh_article():
+    """
+    定时刷新推送推文用函数
+    """
     async with (get_session() as db_session):
         try:
             flag = await SubscribeManager.is_database_empty(db_session)
@@ -1061,7 +1065,7 @@ async def refresh_article():
                     try:
                         logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
                         await R.handle_rss(userid=user, group_id_list=sub_list.get(user))
-                        time.sleep(1)
+                        await asyncio.sleep(1)
                     except Exception as e:
                         logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
 
@@ -1077,23 +1081,23 @@ refresh = on_command("refresh", priority=10, permission=SUPERUSER, rule=ignore_g
 @refresh.handle()
 async def refresh_():
     """
-    刷新用推文
+    手动刷新推文
     """
     start_time = datetime.now()
-    logger.info(f"{datetime.now()} 开始刷新推文")
+    logger.info(f"{start_time} 开始刷新推文")
     await refresh_article()
     end_time = datetime.now()
     full_time = end_time - start_time
     await refresh.finish(f"刷新完成,共用时{full_time}")
 
 
-#定时任务，发送最新推文
 @scheduler.scheduled_job(CronTrigger(minute=f"*/{config.refresh_time}"),misfire_grace_time=60)
 async def auto_update_func():
     """
-    定时向订阅群组发送推文
+    定时任务，检查更新并向订阅群组发送推文
     """
-    logger.info(f"{datetime.now()} 开始处理订阅")
+    start_time = datetime.now()
+    logger.info(f"{start_time} 开始处理订阅")
     try:
         bot = get_bot()
     except Exception as e:
@@ -1103,3 +1107,7 @@ async def auto_update_func():
         logger.info("当前时间为休息时间，不处理推文")
     else:
         await refresh_article()
+
+    end_time = datetime.now()
+    full_time = end_time - start_time
+    logger.info(f"刷新完成,共用时{full_time}")

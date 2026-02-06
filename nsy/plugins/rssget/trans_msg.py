@@ -30,11 +30,10 @@ async def if_self_trans(username,entry):
 
 async def remove_html_tag_soup(html):
     """
-    使用BeautifulSoup移除指定标签及其内容
+    使用BeautifulSoup移除 div 标签及其内容
 
     参数:
         html (str): HTML字符串
-        tag_name (str/list): 要移除的标签名或标签名列表
 
     返回:
         str: 清理后的HTML字符串
