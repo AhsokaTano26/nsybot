@@ -32,17 +32,51 @@ async def User_name_get(id):
 # 配置项
 TIMEOUT = 30  # 请求超时时间
 config = get_plugin_config(Config)
-client = httpx.AsyncClient(timeout=30) # 全局初始化 client
+
+class NetworkManager:
+    _client: httpx.AsyncClient = None
+
+    @classmethod
+    def get_client(cls) -> httpx.AsyncClient:
+        if cls._client is None or cls._client.is_closed:
+            # 配置连接池：保持 20 个长连接，最多允许 50 个并发
+            limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
+            # 配置超时：连接 10s，读写 30s
+            timeout = httpx.Timeout(30.0, connect=10.0)
+            cls._client = httpx.AsyncClient(
+                limits=limits,
+                timeout=timeout,
+                follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (nsybot; RSS Reader)"}
+            )
+        return cls._client
+
+    @classmethod
+    async def close(cls):
+        if cls._client:
+            await cls._client.aclose()
+            logger.info("网络连接池已关闭")
+
 
 async def fetch_feed(url: str) -> dict:
     """异步获取并解析RSS内容"""
+    client = NetworkManager.get_client()
     try:
         resp = await client.get(url)
         resp.raise_for_status()
-        return feedparser.parse(resp.content)
+        parsed = feedparser.parse(resp.content)
+
+        if parsed.bozo:  # feedparser 内部解析错误
+            logger.warning(f"RSS 格式异常: {url}")
+
+        return parsed
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP错误 {e.response.status_code}: {url}")
+    except httpx.RequestError as e:
+        logger.error(f"网络请求异常: {type(e).__name__} on {url}")
     except Exception as e:
-        logger.opt(exception=False).error(f"RSS请求失败: {str(e)}")
-        return {"error": f"获取内容失败: {str(e)}"}
+        logger.exception(f"解析非预期错误: {url}")
+    return {"entries": [], "error": "Fetch failed"}
 
 
 class rss_get():
@@ -52,39 +86,42 @@ class rss_get():
         发送bot状态报告
         Args: status_url (str): uptime-kuma状态检查url
         """
-        try:
-            await client.get(status_url)
-        except Exception as e:
-            logger.error(f"状态上报失败: {e}")
+        client = NetworkManager.get_client()
 
-    async def send_onebot_image(self,img_url: str, group_id, num):
-        """OneBot 专用图片发送方法"""
+        # 使用 create_task 以后台执行，不等待响应直接继续处理下一个 RSS
+        async def _do_report():
+            try:
+                await client.get(status_url, timeout=5)
+            except Exception:
+                pass
+
+        asyncio.create_task(_do_report())
+
+    async def send_onebot_image(self, img_url: str, group_id: int, retry_count: int = 0):
+        """优化后的图片发送，支持连接池复用和优雅重试"""
         bot = get_bot()
-        num += 1
+        client = NetworkManager.get_client()
+
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                # 下载图片数据
-                resp = await client.get(img_url)
-                resp.raise_for_status()
+            resp = await client.get(img_url, timeout=20)
+            resp.raise_for_status()
 
-                # 构造图片消息段
-                image_seg = MessageSegment.image(resp.content)
+            await bot.call_api("send_group_msg", **{
+                "group_id": group_id,
+                "message": MessageSegment.image(resp.content)
+            })
+            logger.info(f"图片发送成功")
 
-                # 发送图片
-                await bot.call_api("send_group_msg", **{
-                    "group_id": group_id,
-                    "message": image_seg
-                })
-
-        except Exception as e:
-            logger.opt(exception=False).error(f"意外错误|图片发送失败: {str(e)}  第 {num} 次重试")
-            if num <= 3:
-                await self.send_onebot_image(img_url, group_id, num)
+        except (httpx.HTTPError, Exception) as e:
+            if retry_count < 3:
+                wait_time = (retry_count + 1) * 2  # 2s, 4s, 6s
+                logger.warning(f"图片下载失败，{wait_time}s 后进行第 {retry_count + 1} 次重试: {e}")
+                await asyncio.sleep(wait_time)
+                await self.send_onebot_image(img_url, group_id, retry_count + 1)
             else:
-                await bot.call_api("send_group_msg", **{
-                    "group_id": group_id,
-                    "message": f"意外错误|图片下载失败：{e} \n已达到最大重试次数"
-                })
+                logger.error(f"图片发送达到最大重试次数: {img_url}")
+                # 只有最后一次失败才打扰用户
+                await bot.send_group_msg(group_id=group_id, message=f"❌ 图片下载失败: {e[:30]}")
 
     async def send_text(self,
                         group_id: int,
@@ -162,7 +199,7 @@ class rss_get():
                                 "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
                             })
                         for index, img_url in enumerate(content["images"], 1):
-                            await self.send_onebot_image(img_url, group_id, num=0)
+                            await self.send_onebot_image(img_url, group_id)
 
                     logger.info("成功发送图片信息")
 
