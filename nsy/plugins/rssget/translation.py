@@ -1,7 +1,7 @@
-import requests
 import json
 import re
-from openai import OpenAI
+import httpx
+from openai import AsyncOpenAI
 from nonebot import get_plugin_config
 
 from alibabacloud_tea_openapi.client import Client as OpenApiClient
@@ -22,7 +22,8 @@ class BaiDu:
     调用百度机器翻译API进行翻译操作
     """
     async def main(self, body=str):
-        url = "https://aip.baidubce.com/rpc/2.0/mt/texttrans/v1?access_token=" + self.get_access_token()
+        access_token = await self.get_access_token()
+        url = "https://aip.baidubce.com/rpc/2.0/mt/texttrans/v1?access_token=" + access_token
 
         payload = json.dumps({
             "from": "auto",
@@ -34,10 +35,10 @@ class BaiDu:
             'Accept': 'application/json'
         }
 
-        response = requests.request("POST", url, headers=headers, data=payload.encode("utf-8"))
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, headers=headers, content=payload.encode("utf-8"))
 
-        json_result = response.text
-        result = json.loads(json_result)
+        result = response.json()
 
         # 提取单个 dst
         first_translation = result["result"]["trans_result"][0]["dst"]
@@ -45,7 +46,7 @@ class BaiDu:
         return first_translation
 
 
-    def get_access_token(self):
+    async def get_access_token(self):
         """
         使用 AK，SK 生成鉴权签名（Access Token）
         :return: access_token，或是None(如果错误)
@@ -53,7 +54,9 @@ class BaiDu:
         cfg = get_config()
         url = "https://aip.baidubce.com/oauth/2.0/token"
         params = {"grant_type": "client_credentials", "client_id": cfg.api_key, "client_secret": cfg.secret_key}
-        return str(requests.post(url, params=params).json().get("access_token"))
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, params=params)
+        return str(response.json().get("access_token"))
 
 
 
@@ -143,12 +146,12 @@ class Ali:
 class DeepSeek:
     async def main(self, text):
         cfg = get_config()
-        client = OpenAI(
+        client = AsyncOpenAI(
             api_key=cfg.api_key,
-            base_url="https://api.deepseek.com"  # DeepSeek API 端点
+            base_url="https://api.deepseek.com"
         )
-        response = client.chat.completions.create(
-            model="deepseek-chat",  # 指定使用的模型
+        response = await client.chat.completions.create(
+            model="deepseek-chat",
             messages=[
                 {
                     "role": "system",
@@ -202,8 +205,9 @@ class Ollama:
         }
 
         try:
-            response = requests.post(url, json=payload)
-            response.raise_for_status()
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
             a = response.json()["response"].strip()
             return await self.remove_think_tags(a)
         except Exception as e:

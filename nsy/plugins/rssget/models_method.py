@@ -19,6 +19,14 @@ class DetailManager:
         """根据 student_id 获取单个信息"""
         return await session.get(Detail, student_id)
 
+    @classmethod
+    async def get_existing_ids(cls, session: async_scoped_session, ids: list[str]) -> set[str]:
+        """批量检查已存在id"""
+        if not ids:
+            return set()
+        result = await session.execute(select(Detail.id).where(Detail.id.in_(ids)))
+        return {row[0] for row in result}
+
     @staticmethod
     async def is_database_empty(db_session):
         # 查询数据库，判断是否有数据
@@ -212,6 +220,12 @@ class GroupconfigManager:
     async def get_Sign_by_group_id(cls, session: async_scoped_session, student_id: int) -> Optional[Groupconfig]:
         """根据 student_id 获取单个信息"""
         return await session.get(Groupconfig, student_id)
+
+    @classmethod
+    async def get_all_configs(cls, session: async_scoped_session) -> dict[int, Groupconfig]:
+        """获取所有群组配置"""
+        result = await session.execute(select(Groupconfig))
+        return {gc.group_id: gc for gc in result.scalars().all()}
 
     @staticmethod
     async def is_database_empty(db_session):

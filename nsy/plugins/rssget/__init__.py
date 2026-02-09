@@ -1,6 +1,6 @@
-import time
-from datetime import datetime, timedelta
 import asyncio
+from datetime import datetime, timedelta
+
 import feedparser
 import httpx
 from apscheduler.triggers.cron import CronTrigger
@@ -9,9 +9,9 @@ from nonebot import get_bot, get_plugin_config, on_command, require
 from nonebot.adapters.onebot.v11 import (GROUP_ADMIN, GROUP_OWNER,
                                          GroupMessageEvent, Message,
                                          MessageSegment)
+from nonebot.exception import FinishedException
 from nonebot.log import logger
 from nonebot.params import CommandArg
-from nonebot.exception import FinishedException
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import to_me
@@ -19,6 +19,7 @@ from nonebot_plugin_orm import get_session
 from sqlalchemy.exc import SQLAlchemyError
 
 from nsy.plugins.rssget.models import User
+
 from .config import Config
 from .encrypt import encrypt
 from .following_import import fetch_and_match
@@ -1061,13 +1062,23 @@ async def refresh_article():
                     sub_list[username].append(group)
                 logger.success(f"{datetime.now()} 已获取所有订阅信息")
 
-                for user in sub_list:
-                    try:
-                        logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
-                        await R.handle_rss(userid=user, group_id_list=sub_list.get(user))
-                        await asyncio.sleep(1)
-                    except Exception as e:
-                        logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
+                # 预加载所有群组配置
+                group_configs = await GroupconfigManager.get_all_configs(db_session)
+                logger.info(f"已预加载 {len(group_configs)} 个群组配置")
+
+                semaphore = asyncio.Semaphore(5)  # 控制rsshub请求并发数
+
+                async def process_user(user, groups):
+                    async with semaphore:
+                        try:
+                            logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
+                            await R.handle_rss(userid=user, group_id_list=groups, group_configs=group_configs)
+                            await asyncio.sleep(0.5)
+                        except Exception as e:
+                            logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
+
+                tasks = [process_user(user, sub_list[user]) for user in sub_list]
+                await asyncio.gather(*tasks)
 
             await rss_get().change_config()
             logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
