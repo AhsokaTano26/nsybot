@@ -17,8 +17,6 @@ from .models_method import (ContentManager, DetailManager, PlantformManager,
 from .trans_msg import if_self_trans, if_trans
 from .update_text import get_text, update_text
 
-# 配置项
-TIMEOUT = 30  # 请求超时时间
 config = get_plugin_config(Config)
 
 class NetworkManager:
@@ -44,6 +42,32 @@ class NetworkManager:
         if cls._client:
             await cls._client.aclose()
             logger.info("网络连接池已关闭")
+
+
+# 消息发送全局限流
+_msg_semaphore = asyncio.Semaphore(10)
+
+# 默认群组配置值
+_DEFAULT_GROUP_CONFIG = {
+    "if_need_trans": True,
+    "if_need_self_trans": False,
+    "if_need_translate": True,
+    "if_need_photo_num_mention": True,
+    "if_need_merged_message": True,
+}
+
+
+def _parse_group_config(group_config) -> dict:
+    """从群组配置对象或None解析配置字典"""
+    if group_config:
+        return {
+            "if_need_trans": group_config.if_need_trans,
+            "if_need_self_trans": group_config.if_need_self_trans,
+            "if_need_translate": group_config.if_need_translate,
+            "if_need_photo_num_mention": group_config.if_need_photo_num_mention,
+            "if_need_merged_message": group_config.if_need_merged_message,
+        }
+    return _DEFAULT_GROUP_CONFIG
 
 
 async def fetch_feed(url: str) -> dict:
@@ -109,7 +133,7 @@ class rss_get():
             else:
                 logger.error(f"图片发送达到最大重试次数: {img_url}")
                 # 只有最后一次失败才打扰用户
-                await bot.send_group_msg(group_id=group_id, message=f"❌ 图片下载失败: {e[:30]}")
+                await bot.send_group_msg(group_id=group_id, message=f"❌ 图片下载失败: {str(e)[:30]}")
 
     async def send_text(self,
                         group_id: int,
