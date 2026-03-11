@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime
 from typing import List
-
+import random
 import feedparser
 import httpx
 from nonebot import get_bot, get_plugin_config
@@ -33,7 +33,6 @@ class NetworkManager:
                 limits=limits,
                 timeout=timeout,
                 follow_redirects=True,
-                headers={"User-Agent": "Mozilla/5.0 (nsybot; RSS Reader)"}
             )
         return cls._client
 
@@ -44,8 +43,8 @@ class NetworkManager:
             logger.info("网络连接池已关闭")
 
 
-# 消息发送全局限流
-_msg_semaphore = asyncio.Semaphore(10)
+# 消息发送全局限流（限制为3，防止过快发送导致风控，尤其是图片较多时）
+_msg_semaphore = asyncio.Semaphore(3)
 
 # 默认群组配置值
 _DEFAULT_GROUP_CONFIG = {
@@ -386,6 +385,9 @@ class rss_get():
                                 if_is_trans=if_is_trans,
                                 group_config=gc,
                             )
+                            # 发送完一条推文后随机等待1.5-3.5秒，避免过快发送导致风控
+                            delay = random.uniform(1.5, 3.5)
+                            await asyncio.sleep(delay)
 
                     except Exception as e:
                         logger.opt(exception=False).error(

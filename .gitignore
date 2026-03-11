@@ -149,3 +149,16 @@ dmypy.json
 .env.prod
 /deepseek.py
 /ollama_get_model.py
+# macOS 系统文件
+.DS_Store
+
+# JetBrains / PyCharm 配置文件
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.class
