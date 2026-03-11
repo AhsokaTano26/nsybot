@@ -1102,7 +1102,7 @@ async def refresh_():
     await refresh.finish(f"刷新完成,共用时{full_time}")
 
 
-@scheduler.scheduled_job(CronTrigger(minute=f"*/{config.refresh_time}"),misfire_grace_time=60)
+@scheduler.scheduled_job('interval',minutes=config.refresh_time,misfire_grace_time=60)
 async def auto_update_func():
     """
     定时任务，检查更新并向订阅群组发送推文
