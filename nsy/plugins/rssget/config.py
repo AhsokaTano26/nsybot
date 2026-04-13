@@ -16,10 +16,16 @@ class Config(BaseModel):
     secret_key: str | None = None
     model_name: str | None = None
 
-    # 其他配置
+    # 可用性监控配置
+    ut_url: str | None = None
+
+    # 更新时间配置
     refresh_time: int = 20
+
+    # 发送和并转发消息时所使用时QQ号
     self_id: int = 10001
-    ut_url: str = "None"
+
+    # 帮助信息
     help_msg_1: str = """nsy 推文助手：订阅三步走
 ——————
 想让机器人自动转发推特/b站？请按以下顺序操作：

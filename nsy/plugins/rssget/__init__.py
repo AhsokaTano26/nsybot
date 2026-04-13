@@ -356,81 +356,92 @@ async def handle_rss(event: GroupMessageEvent, args: Message = CommandArg()):
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
+
 @rss_list.handle()
 async def handle_rss(event: GroupMessageEvent):
     async with (get_session() as db_session):
+        # 获取当前 bot 实例
+        from nonebot import get_bot
         bot = get_bot()
         group_id = event.group_id
+        self_id = int(bot.self_id)  # 用于合并转发节点显示
 
         sub_list = {}
         try:
             flag = await SubscribeManager.is_database_empty(db_session)
             if flag:
                 await rss_list.send("当前无订阅")
-            else:
-                # 一次查询获取所有订阅记录
-                all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
+                return
 
-                # 在内存中构建 sub_list
-                for sub in all_subscriptions:
-                    username = sub.username
-                    group = int(sub.group)
-                    if username not in sub_list:
-                        sub_list[username] = []
-                    sub_list[username].append(group)
-                logger.success("已获取所有订阅信息")
+            # 一次查询获取所有订阅记录
+            all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
 
-                # 批量获取所有用户信息
-                user_ids = list(sub_list.keys())
-                users_dict = await UserManager.get_users_by_ids(db_session, user_ids)
+            # 在内存中构建 sub_list
+            for sub in all_subscriptions:
+                username = sub.username
+                group = int(sub.group)
+                if username not in sub_list:
+                    sub_list[username] = []
+                sub_list[username].append(group)
 
-                # 构建消息
-                msg_parts = ["📋 当前订阅列表：\n"]
-                forward_nodes = []
-                for user in sub_list:
-                    msg_parts.append("\n")
-                    user_detail = users_dict.get(user)
-                    user_name = user_detail.User_Name if user_detail else "未知"
+            logger.success("已获取所有订阅信息")
 
-                    entry = f"\n用户ID: {user}\n用户名: {user_name}\n"
-                    msg_parts.append(f"用户ID: {user}\n")
-                    msg_parts.append(f"用户名: {user_name}\n")
-                    for group in sub_list[user]:
-                        entry += f"    推送群组: {group}\n"
+            # 批量获取所有用户信息
+            user_ids = list(sub_list.keys())
+            users_dict = await UserManager.get_users_by_ids(db_session, user_ids)
 
-                    if len(msg_buffer) + len(entry) > MAX_CHAR_PER_NODE:
-                        forward_nodes.append(
-                            MessageSegment.node_custom(
-                                user_id=config.self_id,
-                                nickname="Ksm 初号机",
-                                content=msg_buffer
-                            )
-                        )
-                        msg_buffer = "📋 订阅列表 (续)：\n" + entry  # 重置缓冲区
-                    else:
-                        msg_buffer += entry
+            # --- 关键修复：初始化变量 ---
+            forward_nodes = []
+            msg_buffer = "📋 当前订阅列表：\n"
+            MAX_CHAR_PER_NODE = 5000  # 建议设置一个合理的阈值防止超限
 
-                if msg_buffer:
+            for user in sub_list:
+                user_detail = users_dict.get(user)
+                user_name = user_detail.User_Name if user_detail else "未知"
+
+                # 构建单个用户的条目
+                entry = f"\n用户ID: {user}\n用户名: {user_name}\n"
+                for group in sub_list[user]:
+                    entry += f"    推送群组: {group}\n"
+
+                # 检查缓冲区长度，决定是否分节
+                if len(msg_buffer) + len(entry) > MAX_CHAR_PER_NODE:
                     forward_nodes.append(
                         MessageSegment.node_custom(
-                            user_id=config.self_id,
+                            user_id=self_id,
                             nickname="Ksm 初号机",
                             content=msg_buffer
                         )
                     )
+                    msg_buffer = "📋 订阅列表 (续)：\n" + entry  # 重置并开始新节
+                else:
+                    msg_buffer += entry
 
-                # 将节点列表转换为一个包含所有转发节点的 Message 对象
-                forward_message = Message(forward_nodes)
+            # 处理最后剩余的内容
+            if msg_buffer:
+                forward_nodes.append(
+                    MessageSegment.node_custom(
+                        user_id=self_id,
+                        nickname="Ksm 初号机",
+                        content=msg_buffer
+                    )
+                )
 
-                try:
-                    # 发送合并打包消息
-                    await bot.send_forward_msg(group_id=group_id, message=forward_message)
-                    logger.info(f"发送群 {group_id} 合并转发消息成功")
-                except Exception as e:
-                    logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
+            # 将节点列表转换为 Message 对象
+            forward_message = Message(forward_nodes)
+
+            try:
+                # 发送合并转发消息
+                await bot.send_forward_msg(group_id=group_id, message=forward_message)
+                logger.info(f"发送群 {group_id} 合并转发消息成功")
+            except Exception as e:
+                logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
+                # 备选方案：如果转发失败，尝试直接发送文字（可选）
+                # await rss_list.send("转发失败，可能是消息过长或频率受限")
 
         except SQLAlchemyError as e:
-            logger.opt(exception=False).error(f"数据库操作错误: {e}")
+            logger.opt(exception=True).error(f"数据库操作错误: {e}")
+            await rss_list.send("查询订阅列表时出现数据库错误")
 
 
 
@@ -1022,7 +1033,11 @@ async def handle_rss(args: Message = CommandArg()):
 
             for group_id in group_set:
                 group = int(group_id)
-                await bot.send_group_msg(group_id=group, message=msg)
+                try:
+                    await bot.send_group_msg(group_id=group, message=msg)
+                    logger.info(f"成功发送消息到群 {group_id}")
+                except Exception as e:
+                        logger.opt(exception=False).error(f"发送消息到群 {group_id} 失败: {e}")
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
         except Exception as e:
