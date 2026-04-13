@@ -1,19 +1,21 @@
 version: "3"
 
-x-config-host: &config-host ${HOST:-0.0.0.0}
+x-config-host: &config-host ${HOST:-127.0.0.1}
 x-config-port: &config-port ${PORT:-12035}
 
 services:
   nonebot:
     build: .
+    image: tano/nsybot:latest
     ports:
       - *config-port
     env_file:
-      - .env
+      - .env.prod
     environment:
-      ENVIRONMENT: dev
+      ENVIRONMENT: prod
       HOST: *config-host
       PORT: *config-port
-      SQLALCHEMY_DATABASE_URL: sqlite+aiosqlite:///./data/db.sqlite3
-      ALEMBIC_STARTUP_CHECK: True
     restart: always
+
+    volumes:
+      - ./data:/app/data

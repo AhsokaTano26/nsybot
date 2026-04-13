@@ -1,9 +1,12 @@
-from nonebot_plugin_orm import get_session
-from nonebot.log import logger
-from sqlalchemy.exc import SQLAlchemyError
 import ast
 
-from .models_method import ContentManger
+from nonebot.log import logger
+from nonebot_plugin_orm import get_session
+from sqlalchemy.exc import SQLAlchemyError
+
+from .models_method import ContentManager
+
+
 async def update_text(dic):
     id = dic["id"]
     title = dic["title"]
@@ -18,14 +21,14 @@ async def update_text(dic):
         images = str(image)
         try:
             async with (get_session() as db_session):
-                existing_lanmsg = await ContentManger.get_Sign_by_student_id(
+                existing_lanmsg = await ContentManager.get_Sign_by_student_id(
                         db_session, id)
                 if existing_lanmsg:  # 更新记录
                         logger.info(f"对于 {username} 的 {id} 推文已存在")
                 else:
                     try:
                         # 写入数据库
-                        await ContentManger.create_signmsg(
+                        await ContentManager.create_signmsg(
                             db_session,
                             id=id,
                             username=username,
@@ -45,14 +48,14 @@ async def update_text(dic):
     else:
         try:
             async with (get_session() as db_session):
-                existing_lanmsg = await ContentManger.get_Sign_by_student_id(
+                existing_lanmsg = await ContentManager.get_Sign_by_student_id(
                         db_session, id)
                 if existing_lanmsg:  # 更新记录
                         logger.info(f"对于 {username} 的 {id} 推文已存在")
                 else:
                     try:
                         # 写入数据库
-                        await ContentManger.create_signmsg(
+                        await ContentManager.create_signmsg(
                             db_session,
                             id=id,
                             username=username,
@@ -76,7 +79,7 @@ async def update_text(dic):
 async def get_text(id) -> dict[str, str]:
     async with (get_session() as db_session):
         dic = {}
-        msg = await ContentManger.get_Sign_by_student_id(db_session, id)
+        msg = await ContentManager.get_Sign_by_student_id(db_session, id)
         image_num = msg.image_num
         id = msg.id
         username = msg.username

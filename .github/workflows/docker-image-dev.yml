@@ -32,10 +32,11 @@ jobs:
           images: |
             tano26/nsybot-dev
           tags: |
+            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-            type=raw,value=latest 
+            type=raw,value=latest
 
       - name: Build and Publish
         uses: docker/build-push-action@v4

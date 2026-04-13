@@ -142,3 +142,23 @@ dmypy.json
 # End of https://www.toptal.com/developers/gitignore/api/python
 /config.json
 /test.py
+
+/data/*
+
+.env.dev
+.env.prod
+/deepseek.py
+/ollama_get_model.py
+# macOS 系统文件
+.DS_Store
+
+# JetBrains / PyCharm 配置文件
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.class
