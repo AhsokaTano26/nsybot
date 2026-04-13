@@ -289,7 +289,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
 rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,rule=ignore_group)
 rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,rule=ignore_group)
-rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,rule=ignore_group)
+rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,permission=SUPERUSER, rule=ignore_group)
 
 @rss_sub.handle()
 async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
@@ -559,7 +559,7 @@ async def handle_rss(event: GroupMessageEvent):
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-find = on_command("查询", priority=10, permission=SUPERUSER |GROUP_OWNER |GROUP_ADMIN, rule=ignore_group)
+find = on_command("查询", priority=10, permission=SUPERUSER, rule=ignore_group)
 @find.handle()
 async def handle_rss(args: Message = CommandArg()):
     """
