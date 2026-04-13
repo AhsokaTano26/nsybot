@@ -862,8 +862,8 @@ async def handle_sub_by_index(event: GroupMessageEvent, args: Message = CommandA
     )
 
 
-list = on_command("list", aliases={"文章列表"}, priority=10,rule=ignore_group)
-@list.handle()
+list_article = on_command("list", aliases={"文章列表"}, priority=10,rule=ignore_group)
+@list_article.handle()
 async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     """
     查询用户文章列表
