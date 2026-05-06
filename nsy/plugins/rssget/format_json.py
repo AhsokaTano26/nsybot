@@ -10,7 +10,16 @@ from .translation import Ali, BaiDu, DeepSeek, Ollama
 
 config = get_plugin_config(Config)
 MODEL_NAME = os.getenv('MODEL_NAME', None)
-TRANS_PLATFORM = int(os.getenv('TRANS_PLATFORM', 9))
+
+
+def _get_trans_platform() -> int:
+    try:
+        return int(os.getenv("TRANS_PLATFORM", "9"))
+    except ValueError:
+        return 0
+
+
+TRANS_PLATFORM = _get_trans_platform()
 
 PLATFORMS = {
     0: DeepSeek(),
@@ -46,6 +55,8 @@ class Format:
         """提取推文内容结构化数据"""
 
         trans = PLATFORMS.get(TRANS_PLATFORM)
+        if trans is None:
+            trans = PLATFORMS[0]
 
         dt = datetime(*entry.published_parsed[:6]) + timedelta(hours=8)
         published = dt.strftime("%Y-%m-%d %H:%M")

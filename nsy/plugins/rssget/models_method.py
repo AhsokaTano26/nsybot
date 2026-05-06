@@ -1,7 +1,7 @@
 from typing import Optional
 
 from nonebot_plugin_orm import async_scoped_session
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 
 from .models import (Content, Detail, Groupconfig, Plantform,  # 导入你的模型定义
                      Subscribe, User)
@@ -95,6 +95,13 @@ class SubscribeManager:
             await session.commit()
             return True
         return False
+
+    @classmethod
+    async def delete_by_group(cls, session: async_scoped_session, group_id: str) -> int:
+        """删除指定群组的所有订阅"""
+        result = await session.execute(delete(Subscribe).where(Subscribe.group == group_id))
+        await session.commit()
+        return result.rowcount or 0
 
 
 class UserManager:

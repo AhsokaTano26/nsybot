@@ -72,6 +72,23 @@ def _parse_int(value, default=None):
     except (TypeError, ValueError):
         return default
 
+
+async def _get_joined_group_ids() -> set[str]:
+    bot = get_bot()
+    response = await bot.call_api("get_group_list")
+    groups = response.get("data", response) if isinstance(response, dict) else response
+
+    joined_group_ids: set[str] = set()
+    for group in groups or []:
+        if isinstance(group, dict):
+            group_id = group.get("group_id")
+        else:
+            group_id = getattr(group, "group_id", None)
+        if group_id is not None:
+            joined_group_ids.add(str(group_id))
+
+    return joined_group_ids
+
 async def User_get() -> set:
     async with (get_session() as db_session):
         sheet1 = await UserManager.get_all_student_id(db_session)
@@ -1162,6 +1179,43 @@ async def refresh_():
     end_time = datetime.now()
     full_time = end_time - start_time
     await refresh.finish(f"刷新完成,共用时{full_time}")
+
+
+cleanup_orphan_subscriptions = on_command(
+    "清理失效订阅",
+    aliases={"清理群订阅", "清理失效群订阅"},
+    priority=10,
+    permission=SUPERUSER,
+    rule=ignore_group,
+)
+
+
+@cleanup_orphan_subscriptions.handle()
+async def cleanup_orphan_subscriptions_():
+    """清理 bot 已不在群内但仍存在订阅记录的群组订阅"""
+    async with get_session() as db_session:
+        try:
+            joined_group_ids = await _get_joined_group_ids()
+            all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
+            subscribed_group_ids = {str(sub.group) for sub in all_subscriptions}
+
+            orphan_group_ids = sorted(subscribed_group_ids - joined_group_ids)
+            if not orphan_group_ids:
+                await cleanup_orphan_subscriptions.finish("当前没有需要清理的失效群订阅")
+
+            deleted_count = 0
+            for group_id in orphan_group_ids:
+                deleted_count += await SubscribeManager.delete_by_group(db_session, group_id)
+
+            await cleanup_orphan_subscriptions.finish(
+                f"✅ 清理完成\n"
+                f"已加入群聊数: {len(joined_group_ids)}\n"
+                f"清理失效群数: {len(orphan_group_ids)}\n"
+                f"删除订阅条数: {deleted_count}"
+            )
+        except Exception as e:
+            logger.opt(exception=True).error(f"清理失效订阅失败: {e}")
+            await cleanup_orphan_subscriptions.finish(f"❌ 清理失败: {e}")
 
 
 @scheduler.scheduled_job('interval',minutes=config.refresh_time,misfire_grace_time=60)
