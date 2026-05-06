@@ -151,7 +151,7 @@ class DeepSeek:
             base_url="https://api.deepseek.com"
         )
         response = await client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             messages=[
                 {
                     "role": "system",
