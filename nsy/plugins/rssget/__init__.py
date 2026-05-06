@@ -61,6 +61,17 @@ async def ignore_group(event: GroupMessageEvent) -> bool:
         return False
     return True
 
+
+def _split_args(command: str) -> list[str]:
+    return command.split()
+
+
+def _parse_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
 async def User_get() -> set:
     async with (get_session() as db_session):
         sheet1 = await UserManager.get_all_student_id(db_session)
@@ -109,7 +120,7 @@ def is_current_time_in_period(start_time_str, end_time_str):
         # 当前时间在开始时间和结束时间之间
         return start_time <= now <= end_time
 
-def extract_content(entry,if_need_trans) -> dict:
+async def extract_content(entry,if_need_trans) -> dict:
     """提取推文内容结构化数据"""
     publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
@@ -121,7 +132,7 @@ def extract_content(entry,if_need_trans) -> dict:
     # 清理文本内容
     clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
     if if_need_trans == 1:
-        trans_text1 = B.main(BeautifulSoup(entry.description, "html.parser").get_text("\n"))  #为翻译段落划分
+        trans_text1 = await B.main(BeautifulSoup(entry.description, "html.parser").get_text("\n"))  #为翻译段落划分
         trans_text = trans_text1.replace("+", "\n")
     else:
         trans_text = None
@@ -186,10 +197,16 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     logger.info(f"从群 {event.group_id} 发起RSS_Hub请求")
 
     command = args.extract_plain_text().strip()
-    userid = command.split(" ")[0]
-    try:
-        num = int(command.split(" ")[1])
-    except:
+    parts = _split_args(command)
+    if not parts:
+        await rss_cmd.finish("请输入Twitter用户名，例如：/rss aibaaiai")
+
+    userid = parts[0]
+    if len(parts) > 1:
+        num = _parse_int(parts[1])
+        if num is None:
+            await rss_cmd.finish("文章序号必须是数字")
+    else:
         num = 0
     sheet1 = await User_get()
     if not userid:
@@ -214,6 +231,9 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 
             if not data.get("entries"):
                 await rss_cmd.finish("该用户暂无动态或不存在")
+
+            if num < 0 or num >= len(data.entries):
+                await rss_cmd.finish(f"文章序号超出范围，当前可用范围: 0-{len(data.entries) - 1}")
 
             # 处理最新一条推文
             latest = data.entries[num]
@@ -253,7 +273,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
                                 await send_onebot_image(img_url)
                     else:   #从RSSHUB获取信息
                         logger.info(f"该 {trueid} 推文不存在")
-                        content = extract_content(latest,if_need_trans)
+                        content = await extract_content(latest,if_need_trans)
                         content["username"] = username
                         content["id"] = trueid
                         await update_text(content)
@@ -294,7 +314,10 @@ rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10,permissi
 @rss_sub.handle()
 async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
-    username = str(command.split(" ")[0])
+    parts = _split_args(command)
+    if not parts:
+        await rss_sub.finish("请输入用户名和群号，例如：订阅 aibaaiai 123456")
+    username = parts[0]
     group_id = str(event.group_id)
 
     sheet1 = await User_get()
@@ -331,7 +354,10 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
 @rss_unsub.handle()
 async def handle_rss(event: GroupMessageEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
-    username = str(command.split(" ")[0])
+    parts = _split_args(command)
+    if not parts:
+        await rss_unsub.finish("请输入用户名和群号，例如：取消订阅 aibaaiai 123456")
+    username = parts[0]
     group_id = str(event.group_id)
     true_id = username + "-" + group_id
     async with (get_session() as db_session):
@@ -454,9 +480,12 @@ async def handle_rss(args: Message = CommandArg()):
     增加可访问用户列表中用户
     """
     command = args.extract_plain_text().strip()
-    user_id = str(command.split(" ")[0])
-    user_name = str(command.split(" ")[1])
-    Plantform = str(command.split(" ")[2])
+    parts = _split_args(command)
+    if len(parts) < 3:
+        await user_sub.finish("用法: 增加用户 <用户ID> <用户名> <平台名>")
+    user_id = parts[0]
+    user_name = parts[1]
+    Plantform = parts[2]
     async with (get_session() as db_session):
         try:
             Plantform_in_list = await PlantformManager.get_Sign_by_student_id(
@@ -496,8 +525,11 @@ async def handle_rss(args: Message = CommandArg()):
     删除可访问用户列表中用户
     """
     command = args.extract_plain_text().strip()
-    user_id = str(command.split(" ")[0])
-    user_name = str(command.split(" ")[1])
+    parts = _split_args(command)
+    if len(parts) < 2:
+        await user_unsub.finish("用法: 删除用户 <用户ID> <用户名>")
+    user_id = parts[0]
+    user_name = parts[1]
     async with (get_session() as db_session):
         try:
             # 检查数据库中是否已存在该 Student_id 的记录
@@ -578,8 +610,11 @@ async def handle_rss(args: Message = CommandArg()):
     """
     async with (get_session() as db_session):
         command = args.extract_plain_text().strip()
+        parts = _split_args(command)
         if command.startswith("群组"):
-            group_id = str(command.split(" ")[1])
+            if len(parts) < 2:
+                await find.finish("用法: 查询 群组 <群号>")
+            group_id = parts[1]
             try:
                 # 直接按群组ID查询订阅
                 subscriptions = await SubscribeManager.get_subscriptions_by_group(db_session, group_id)
@@ -593,7 +628,9 @@ async def handle_rss(args: Message = CommandArg()):
             except SQLAlchemyError as e:
                 logger.opt(exception=False).error(f"数据库操作错误: {e}")
         elif command.startswith("用户"):
-            user_id = str(command.split(" ")[1])
+            if len(parts) < 2:
+                await find.finish("用法: 查询 用户 <用户ID>")
+            user_id = parts[1]
             try:
                 # 直接按用户名查询订阅
                 subscriptions = await SubscribeManager.get_subscriptions_by_username(db_session, user_id)
@@ -874,9 +911,9 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     userid = args.extract_plain_text().strip()
     sheet1 = await User_get()
     if not userid:
-        await rss_cmd.finish("请输入Twitter用户名，例如：文章列表 aibaaiai")
+        await list_article.finish("请输入Twitter用户名，例如：文章列表 aibaaiai")
     elif userid not in sheet1:
-        await rss_cmd.finish("请求被否决")
+        await list_article.finish("请求被否决")
     else:
         async with (get_session() as db_session):
             plantform = await UserManager.get_Sign_by_student_id(db_session, userid)
@@ -891,21 +928,21 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
             # 获取数据
             data = await fetch_feed(feed_url)
             if "error" in data:
-                await rss_cmd.finish(data["error"])
+                await list_article.finish(data["error"])
 
             if not data.get("entries"):
-                await rss_cmd.finish("该用户暂无动态或不存在")
+                await list_article.finish("该用户暂无动态或不存在")
 
             # 处理最新一条推文
             msg = (f"用户 {username} 的推文列表：\n")
             num = len(data.get("entries"))
             for i in range(0,num):
                 latest = data.get("entries")[i]
-                content = extract_content(latest, if_need_trans)
-                if not content['trans_title'] == None:
+                content = await extract_content(latest, if_need_trans)
+                if content.get('trans_text') is not None:
                     msg += (f"\n序号  {i}\n"
                             f"  标题  {content['title']}\n"
-                            f"  标题翻译  {content['trans_title']}\n")
+                            f"  正文翻译  {content['trans_text']}\n")
                 else:
                     msg += (f"\n序号  {i}\n"
                             f"  标题  {content['title']}\n")
@@ -935,11 +972,21 @@ async def group_config_(event: GroupMessageEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     group_id = event.group_id
     try:
-        if_need_trans = True if int(command.split(" ")[0]) == 1 else False
-        if_need_self_trans = True if int(command.split(" ")[1]) == 1 else False
-        if_need_translate = True if int(command.split(" ")[2]) == 1 else False
-        if_need_photo_num_mention = True if int(command.split(" ")[3]) == 1 else False
-        if_need_merged_message = True if int(command.split(" ")[4]) == 1 else False
+        parts = _split_args(command)
+        if not parts:
+            parts = ["1", "0", "1", "1", "0"]
+        if len(parts) != 5:
+            await group_config.finish("用法: 群组配置 [1/0 1/0 1/0 1/0 1/0]")
+
+        values = [_parse_int(item) for item in parts]
+        if any(item is None or item not in (0, 1) for item in values):
+            await group_config.finish("群组配置参数只能是 0 或 1")
+
+        if_need_trans = True if values[0] == 1 else False
+        if_need_self_trans = True if values[1] == 1 else False
+        if_need_translate = True if values[2] == 1 else False
+        if_need_photo_num_mention = True if values[3] == 1 else False
+        if_need_merged_message = True if values[4] == 1 else False
 
         async with (get_session() as db_session):
             config_msg = await GroupconfigManager.get_Sign_by_group_id(db_session, group_id)
@@ -1123,17 +1170,25 @@ async def auto_update_func():
     定时任务，检查更新并向订阅群组发送推文
     """
     start_time = datetime.now()
-    logger.info(f"{start_time} 开始处理订阅")
-    try:
-        bot = get_bot()
-    except Exception as e:
-        logger.opt(exception=False).error(f"获取bot时发生错误: {e}")
 
-    if is_current_time_in_period("02:00", "08:00"):
-        logger.info("当前时间为休息时间，不处理推文")
-    else:
+    try:
+        # 1. 尝试获取 bot
+        bot = get_bot()
+        if not bot:
+            logger.error("未能获取到有效的 bot 实例")
+            return
+
+        # 2. 检查时间段
+        if is_current_time_in_period("02:00", "08:00"):
+            logger.info("当前为休息时间，跳过本次任务")
+            return
+
+        # 3. 执行核心刷新任务
         await refresh_article()
 
-    end_time = datetime.now()
-    full_time = end_time - start_time
-    logger.info(f"刷新完成,共用时{full_time}")
+    except Exception as e:
+        logger.exception(f"定时任务运行异常: {e}")
+    finally:
+        # 无论成功还是失败，最后记录耗时
+        end_time = datetime.now()
+        logger.info(f"任务结束，总耗时: {end_time - start_time}")

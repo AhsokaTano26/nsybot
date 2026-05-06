@@ -4,13 +4,9 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from nonebot import get_plugin_config
 
-from .get_id import get_id
-from .models_method import (ContentManager, DetailManager, GroupconfigManager,
-                            PlantformManager, UserManager)
-from .trans_msg import if_self_trans, if_trans, remove_html_tag_soup
-from .translation import Ali, BaiDu, DeepSeek, Ollama
-from .update_text import get_text, update_text
 from .config import Config
+from .trans_msg import if_trans, remove_html_tag_soup
+from .translation import Ali, BaiDu, DeepSeek, Ollama
 
 config = get_plugin_config(Config)
 MODEL_NAME = os.getenv('MODEL_NAME', None)
@@ -31,14 +27,14 @@ class Format:
     async def format_content(self, content: dict) -> dict:
         text = dict()
         text["msg"] = [
-            f"🐦 用户 {content["username"]} 最新动态\n"
+            f"🐦 用户 {content['username']} 最新动态\n"
             f"⏰ {content['time']}\n"
             f"🔗 {content['link']}\n"
             f"{content['text']}"
         ]
 
         text["trans_msg"] = [
-            f"{content["trans_text"]}\n"
+            f"{content['trans_text']}\n"
             f"翻译由{MODEL_NAME}提供】"
         ]
 
