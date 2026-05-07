@@ -295,16 +295,26 @@ class rss_get():
                     logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
 
                 if config.rsshub_host_back is not None:
-                    feed_url_back = f"{config.rsshub_host_back}{url}{userid}"
-                    data = await fetch_feed(feed_url_back)
+                    for rsshub_url in config.rsshub_host_back:
+                        feed_url_back = f"{rsshub_url}{url}{userid}"
+                        data = await fetch_feed(feed_url_back)
+                        if not data.get("entries"):
+                            logger.error(f"备用地址 {rsshub_url}该用户暂无动态或不存在")
+                            try:
+                                URL = config.ut_url + f"?status=up&msg={platform.name}备用地址{rsshub_url}可能暂时不可用&ping="
+                                await self.report_status(URL)
+                            except Exception as e:
+                                logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
+                            continue
+                        logger.success(f"成功从备用地址获取数据: {rsshub_url}")
                     if not data.get("entries"):
-                        logger.error("备用地址该用户暂无动态或不存在")
+                        logger.error("所有备用地址均不可用或暂无动态")
                         try:
-                            URL = config.ut_url + f"?status=up&msg={platform.name}备用地址可能暂时不可用&ping="
+                            URL = config.ut_url + f"?status=up&msg={platform.name}所有备用地址均失效&ping="
                             await self.report_status(URL)
                         except Exception as e:
                             logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
-                        return
+                        return None
                 else:
                     return
 

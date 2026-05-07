@@ -9,7 +9,7 @@ class Config(BaseModel):
 
     # RSSHub 配置
     rsshub_host: str = "https://rsshub.app"
-    rsshub_host_back: str | None = None
+    rsshub_host_back: list[str] | None = None
 
     # 翻译/AI 配置
     api_key: str | None = None

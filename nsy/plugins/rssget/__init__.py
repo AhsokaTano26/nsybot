@@ -1177,8 +1177,7 @@ async def refresh_():
     logger.info(f"{start_time} 开始刷新推文")
     await refresh_article()
     end_time = datetime.now()
-    full_time = end_time - start_time
-    await refresh.finish(f"刷新完成,共用时{full_time}")
+    await refresh.finish(f"刷新完成,共用时{end_time - start_time}")
 
 
 cleanup_orphan_subscriptions = on_command(
@@ -1215,7 +1214,6 @@ async def cleanup_orphan_subscriptions_():
             )
         except Exception as e:
             logger.opt(exception=True).error(f"清理失效订阅失败: {e}")
-            await cleanup_orphan_subscriptions.finish(f"❌ 清理失败: {e}")
 
 
 @scheduler.scheduled_job('interval',minutes=config.refresh_time,misfire_grace_time=60)
@@ -1224,6 +1222,7 @@ async def auto_update_func():
     定时任务，检查更新并向订阅群组发送推文
     """
     start_time = datetime.now()
+    logger.info(f"任务开始: {start_time}")
 
     try:
         # 1. 尝试获取 bot
