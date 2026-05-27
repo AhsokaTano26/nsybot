@@ -333,7 +333,7 @@ async def handle_rss(event: GroupMessageEvent,args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     parts = _split_args(command)
     if not parts:
-        await rss_sub.finish("请输入用户名和群号，例如：订阅 aibaaiai 123456")
+        await rss_sub.finish("请输入用户名，例如：订阅 aibaaiai")
     username = parts[0]
     group_id = str(event.group_id)
 
@@ -373,7 +373,7 @@ async def handle_rss(event: GroupMessageEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     parts = _split_args(command)
     if not parts:
-        await rss_unsub.finish("请输入用户名和群号，例如：取消订阅 aibaaiai 123456")
+        await rss_unsub.finish("请输入用户名，例如：取消订阅 aibaaiai")
     username = parts[0]
     group_id = str(event.group_id)
     true_id = username + "-" + group_id
@@ -619,9 +619,9 @@ async def handle_rss(event: GroupMessageEvent):
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-find = on_command("查询", priority=10, permission=SUPERUSER, rule=ignore_group)
+find = on_command("查询", priority=10, permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN, rule=ignore_group)
 @find.handle()
-async def handle_rss(args: Message = CommandArg()):
+async def handle_rss(event: GroupMessageEvent, args: Message = CommandArg()):
     """
     订阅情况查询
     """
@@ -629,9 +629,11 @@ async def handle_rss(args: Message = CommandArg()):
         command = args.extract_plain_text().strip()
         parts = _split_args(command)
         if command.startswith("群组"):
-            if len(parts) < 2:
-                await find.finish("用法: 查询 群组 <群号>")
-            group_id = parts[1]
+            is_superuser = str(event.user_id) in get_bot().config.superusers
+            if is_superuser and len(parts) >= 2:
+                group_id = parts[1]
+            else:
+                group_id = str(event.group_id)
             try:
                 # 直接按群组ID查询订阅
                 subscriptions = await SubscribeManager.get_subscriptions_by_group(db_session, group_id)
