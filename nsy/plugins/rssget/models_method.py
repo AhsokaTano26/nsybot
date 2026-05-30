@@ -183,9 +183,9 @@ class PlantformManager:
         return False
 
     @classmethod
-    async def create_signmsg(cls, session: async_scoped_session, **kwargs) -> User:
+    async def create_signmsg(cls, session: async_scoped_session, **kwargs) -> Plantform:
         """创建新的数据"""
-        new_signmsg = User(**kwargs)
+        new_signmsg = Plantform(**kwargs)
         session.add(new_signmsg)
         await session.commit()
         return new_signmsg
@@ -237,7 +237,7 @@ class GroupconfigManager:
     @staticmethod
     async def is_database_empty(db_session):
         # 查询数据库，判断是否有数据
-        result = await db_session.execute(text("SELECT 1 FROM Content LIMIT 1"))
+        result = await db_session.execute(text("SELECT 1 FROM Group_config LIMIT 1"))
         return not result.fetchone()
 
     @classmethod
@@ -254,6 +254,17 @@ class GroupconfigManager:
         lanmsg = await cls.get_Sign_by_group_id(session, id)
         if lanmsg:
             await session.delete(lanmsg)
+            await session.commit()
+            return True
+        return False
+
+    @classmethod
+    async def update_config(cls, session: async_scoped_session, group_id: int, **kwargs) -> bool:
+        """更新群组配置"""
+        config_obj = await cls.get_Sign_by_group_id(session, group_id)
+        if config_obj:
+            for key, value in kwargs.items():
+                setattr(config_obj, key, value)
             await session.commit()
             return True
         return False
