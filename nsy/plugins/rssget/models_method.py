@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta
 from typing import Optional
 
 from nonebot_plugin_orm import async_scoped_session
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 
 from .models import (Content, Detail, Groupconfig, Plantform,  # 导入你的模型定义
                      Subscribe, User)
@@ -40,6 +41,15 @@ class DetailManager:
         session.add(new_signmsg)
         await session.commit()
         return new_signmsg
+
+    @classmethod
+    async def count_recent(cls, session: async_scoped_session, hours: int = 24) -> int:
+        """统计最近N小时内的记录数"""
+        since = datetime.now() - timedelta(hours=hours)
+        result = await session.execute(
+            select(func.count()).where(Detail.updated >= since)
+        )
+        return result.scalar() or 0
 
 
 class SubscribeManager:

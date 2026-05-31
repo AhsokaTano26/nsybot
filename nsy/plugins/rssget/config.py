@@ -5,7 +5,9 @@ class Config(BaseModel):
     """Plugin Config Here"""
     # 基础配置
     ignored_groups: list[int] = [200214779, 210146004, 524239640, 925265706, 929711368]
+    broadcast_ban_list: list[int] = []
     if_first_time_start: bool = True
+    target_groups: int = 658521872
 
     # RSSHub 配置
     rsshub_host: str = "https://rsshub.app"
@@ -61,6 +63,8 @@ class Config(BaseModel):
 •增加用户：增加用户 用户ID 用户名 平台
 •删除用户：删除用户 用户ID
 •清理失效群订阅：清理失效订阅
+•订阅统计：订阅统计
+•发送统计：发送统计
 ⚠️避坑小贴士：
 1.必须是列表里的用户才能订阅，不在请联系开发者！
 2.用户ID指推特用户主页@之后内容或者b站uid！

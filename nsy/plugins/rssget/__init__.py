@@ -1109,16 +1109,15 @@ async def handle_send_msg(args: Message = CommandArg()):
             all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
             bot = get_bot()
 
-            # 去重
-            group_set = {sub.group for sub in all_subscriptions}
+            # 去重并过滤ban_list
+            group_set = {int(sub.group) for sub in all_subscriptions if int(sub.group) not in config.broadcast_ban_list}
 
             for group_id in group_set:
-                group = int(group_id)
                 try:
-                    await bot.send_group_msg(group_id=group, message=msg)
+                    await bot.send_group_msg(group_id=group_id, message=msg)
                     logger.info(f"成功发送消息到群 {group_id}")
                 except Exception as e:
-                        logger.opt(exception=False).error(f"发送消息到群 {group_id} 失败: {e}")
+                    logger.opt(exception=False).error(f"发送消息到群 {group_id} 失败: {e}")
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
         except Exception as e:
@@ -1197,6 +1196,75 @@ async def refresh_():
     await refresh.finish(f"刷新完成,共用时{end_time - start_time}")
 
 
+sub_stats = on_command("订阅统计", priority=10, permission=SUPERUSER, rule=ignore_group)
+@sub_stats.handle()
+async def handle_sub_stats():
+    """查询总订阅群组数和总订阅数"""
+    async with get_session() as db_session:
+        all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
+        total_subs = len(all_subscriptions)
+        group_set = {sub.group for sub in all_subscriptions}
+        user_set = {sub.username for sub in all_subscriptions}
+
+        await sub_stats.finish(
+            f"📊 订阅统计\n"
+            f"总订阅数: {total_subs}\n"
+            f"订阅群组数: {len(group_set)}\n"
+            f"订阅用户数: {len(user_set)}"
+        )
+
+
+tweet_stats = on_command("发送统计", priority=10, permission=SUPERUSER, rule=ignore_group)
+@tweet_stats.handle()
+async def handle_tweet_stats():
+    """查询过去24h发送的推文数"""
+    async with get_session() as db_session:
+        count = await DetailManager.count_recent(db_session, hours=24)
+        await tweet_stats.finish(f"📊 过去24小时发送推文数: {count}")
+
+
+async def _cleanup_orphan_subscriptions() -> str:
+    """清理失效群订阅，返回详细报告"""
+    async with get_session() as db_session:
+        joined_group_ids = await _get_joined_group_ids()
+        all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
+        subscribed_group_ids = {str(sub.group) for sub in all_subscriptions}
+
+        orphan_group_ids = sorted(subscribed_group_ids - joined_group_ids)
+
+        # 按群组收集被删除的订阅详情
+        orphan_details: dict[str, list[str]] = {}
+        for sub in all_subscriptions:
+            if str(sub.group) in orphan_group_ids:
+                orphan_details.setdefault(str(sub.group), []).append(sub.username)
+
+        if not orphan_group_ids:
+            return (
+                f"✅ 无失效群订阅\n"
+                f"已加入群聊数: {len(joined_group_ids)}\n"
+                f"订阅群组数: {len(subscribed_group_ids)}"
+            )
+
+        deleted_count = 0
+        for group_id in orphan_group_ids:
+            deleted_count += await SubscribeManager.delete_by_group(db_session, group_id)
+
+        # 构建详细报告
+        msg_parts = [
+            f"✅ 清理完成\n",
+            f"已加入群聊数: {len(joined_group_ids)}\n",
+            f"订阅群组数: {len(subscribed_group_ids)}\n",
+            f"清理失效群数: {len(orphan_group_ids)}\n",
+            f"删除订阅条数: {deleted_count}\n\n",
+            f"📋 详细清单:\n",
+        ]
+        for group_id in orphan_group_ids:
+            users = orphan_details.get(group_id, [])
+            msg_parts.append(f"群 {group_id} ({len(users)}条): {', '.join(users)}\n")
+
+        return "".join(msg_parts)
+
+
 cleanup_orphan_subscriptions = on_command(
     "清理失效订阅",
     aliases={"清理群订阅", "清理失效群订阅"},
@@ -1207,30 +1275,40 @@ cleanup_orphan_subscriptions = on_command(
 
 
 @cleanup_orphan_subscriptions.handle()
-async def cleanup_orphan_subscriptions_():
-    """清理 bot 已不在群内但仍存在订阅记录的群组订阅"""
-    async with get_session() as db_session:
+async def handle_cleanup_orphan():
+    """手动清理失效群订阅"""
+    try:
+        report = await _cleanup_orphan_subscriptions()
+        logger.info(f"手动清理失效订阅结果:\n{report}")
+
+        # 发送到 target_groups
         try:
-            joined_group_ids = await _get_joined_group_ids()
-            all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
-            subscribed_group_ids = {str(sub.group) for sub in all_subscriptions}
-
-            orphan_group_ids = sorted(subscribed_group_ids - joined_group_ids)
-            if not orphan_group_ids:
-                await cleanup_orphan_subscriptions.finish("当前没有需要清理的失效群订阅")
-
-            deleted_count = 0
-            for group_id in orphan_group_ids:
-                deleted_count += await SubscribeManager.delete_by_group(db_session, group_id)
-
-            await cleanup_orphan_subscriptions.finish(
-                f"✅ 清理完成\n"
-                f"已加入群聊数: {len(joined_group_ids)}\n"
-                f"清理失效群数: {len(orphan_group_ids)}\n"
-                f"删除订阅条数: {deleted_count}"
-            )
+            bot = get_bot()
+            await bot.send_group_msg(group_id=config.target_groups, message=f"📡 手动清理失效订阅报告\n\n{report}")
         except Exception as e:
-            logger.opt(exception=True).error(f"清理失效订阅失败: {e}")
+            logger.error(f"发送清理报告到群 {config.target_groups} 失败: {e}")
+
+        await cleanup_orphan_subscriptions.finish(report)
+    except Exception as e:
+        logger.opt(exception=True).error(f"清理失效订阅失败: {e}")
+        await cleanup_orphan_subscriptions.finish(f"❌ 清理失败: {e}")
+
+
+@scheduler.scheduled_job(CronTrigger(day_of_week="mon", hour=10, minute=0), misfire_grace_time=60)
+async def weekly_cleanup_orphan():
+    """每周一10:00定时清理失效群订阅"""
+    try:
+        bot = get_bot()
+        if not bot:
+            logger.error("未能获取到有效的 bot 实例")
+            return
+
+        report = await _cleanup_orphan_subscriptions()
+        logger.info(f"定时清理失效订阅结果:\n{report}")
+
+        await bot.send_group_msg(group_id=config.target_groups, message=f"📡 每周自动清理失效订阅报告\n\n{report}")
+    except Exception as e:
+        logger.opt(exception=True).error(f"定时清理失效订阅失败: {e}")
 
 
 @scheduler.scheduled_job('interval',minutes=config.refresh_time,misfire_grace_time=60)
