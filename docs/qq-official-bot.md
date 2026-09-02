@@ -15,7 +15,7 @@ QQ_APP_ID=<AppID>
 QQ_APP_SECRET=<AppSecret>
 QQ_APP_TOKEN=
 QQ_USE_WEBSOCKET=true
-ADMIN_OPENIDS='["<member_openid>"]'
+SUPERUSERS='["<member_openid>"]'
 TARGET_GROUP_OPENID=<group_openid>
 ```
 
@@ -33,9 +33,13 @@ TARGET_GROUP_OPENID=<group_openid>
 官方群接口的 `group_openid` 和 `member_openid` 都是字符串，不能填 QQ 群号或
 QQ 号。第一次在目标群 @ 机器人后，从事件日志取得两个值，并分别写入：
 
-- `ADMIN_OPENIDS`：允许订阅、群配置、广播和运维命令的成员；
+- `SUPERUSERS`：允许跨群查询、用户管理、群发和运维等全局命令的成员；
 - `IGNORED_GROUP_OPENIDS` / `BROADCAST_BAN_OPENIDS`：群过滤名单；
 - `TARGET_GROUP_OPENID`：可选的运维通知群。
+
+`ADMIN_OPENIDS` 已废弃且不会被读取。本群订阅、取消订阅、群组配置，以及私聊
+“导入关注”均向所有用户开放；后者仍需要由用户自行提供目标 `group_openid` 与 X
+登录凭据。
 
 数据库迁移会将 `Group_config.group_id` 转为字符串。原来保存的 QQ 群号不能
 自动映射为官方群 OpenID，需在官方群里重新执行一次“群组配置”和“订阅”。

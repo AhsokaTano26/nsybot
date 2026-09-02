@@ -46,4 +46,5 @@ class Groupconfig(Model):
     if_need_self_trans = Column(BOOLEAN, nullable=False)
     if_need_translate = Column(BOOLEAN, nullable=False)
     if_need_photo_num_mention = Column(BOOLEAN, nullable=False)
+    # 旧版 OneBot 合并转发的遗留列；为兼容现有数据库保留，不再参与配置或发送逻辑。
     if_need_merged_message = Column(BOOLEAN, nullable=False)

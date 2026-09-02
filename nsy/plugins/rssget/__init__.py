@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import httpx
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
-from nonebot import get_bot, get_plugin_config, on_command, on_type, require
+from nonebot import get_bot, get_driver, get_plugin_config, on_command, on_type, require
 from nonebot.adapters.qq import (C2CMessageCreateEvent, Event,
                                  GroupAddRobotEvent, GroupDelRobotEvent,
                                  GroupMessageCreateEvent, Message,
@@ -28,9 +28,10 @@ from .models_method import (ContentManager, DetailManager, GroupconfigManager,
                             PlantformManager, SubscribeManager, UserManager)
 from .translation import Ali, BaiDu, DeepSeek, Ollama
 from .update_text import get_text, update_text
-from .qq import (article_card, download_image, error, file_image, group_openid,
-                 info, is_c2c_event, is_group_event, markdown,
-                 send_group_message, success, user_openid, warning)
+from .qq import (article_card, command_keyboard, download_image, error,
+                 file_image, group_openid, info, is_c2c_event, is_group_event,
+                 markdown, quoted_card, send_group_message, success,
+                 user_openid, warning)
 
 __plugin_meta__ = PluginMetadata(
     name="Twitter RSS订阅",
@@ -60,17 +61,22 @@ async def ignore_group(event: Event) -> bool:
     )
 
 
-async def is_admin(event: Event) -> bool:
-    """QQ 官方群聊使用成员 OpenID 管理机器人权限。"""
+async def is_superuser(event: Event) -> bool:
+    """Only the configured NoneBot superusers may access global admin shortcuts."""
     try:
-        return user_openid(event) in set(config.admin_openids)
+        return user_openid(event) in set(get_driver().config.superusers)
     except ValueError:
         return False
 
 
 group_rule = Rule(is_group_event, ignore_group)
-admin_group_rule = Rule(is_group_event, ignore_group, is_admin)
-private_admin_rule = Rule(is_c2c_event, is_admin)
+private_rule = Rule(is_c2c_event)
+superuser_group_rule = Rule(is_group_event, ignore_group, is_superuser)
+
+PICKER_PAGE_SIZE = 25
+PICKER_SESSION_TTL = timedelta(minutes=30)
+# (群 OpenID、成员 OpenID、操作) -> (创建时间、当前页可操作的用户 ID)
+picker_sessions: dict[tuple[str, str, str], tuple[datetime, list[str]]] = {}
 
 
 def _split_args(command: str) -> list[str]:
@@ -82,6 +88,154 @@ def _parse_int(value, default=None):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _picker_session_key(event: GroupMessageCreateEvent, operation: str) -> tuple[str, str, str]:
+    return (group_openid(event), user_openid(event), operation)
+
+
+def _get_picker_candidates(event: GroupMessageCreateEvent, operation: str) -> list[str] | None:
+    """取得当前成员在当前群的选择面板，过期面板自动失效。"""
+    key = _picker_session_key(event, operation)
+    session = picker_sessions.get(key)
+    if not session:
+        return None
+    created_at, candidates = session
+    if datetime.now() - created_at > PICKER_SESSION_TTL:
+        del picker_sessions[key]
+        return None
+    return candidates
+
+
+def _set_picker_candidates(
+    event: GroupMessageCreateEvent, operation: str, candidates: list[str]
+) -> None:
+    key = _picker_session_key(event, operation)
+    if candidates:
+        picker_sessions[key] = (datetime.now(), candidates)
+    else:
+        picker_sessions.pop(key, None)
+
+
+def _parse_picker_indices(command: str, upper_bound: int) -> list[int]:
+    """解析 ``1 3 5`` 与 ``1-5`` 形式的编号。"""
+    indices: set[int] = set()
+    for part in command.split():
+        if "-" in part:
+            try:
+                start, end = map(int, part.split("-", 1))
+                if start <= end:
+                    indices.update(range(start, end + 1))
+            except ValueError:
+                continue
+        else:
+            index = _parse_int(part)
+            if index is not None:
+                indices.add(index)
+    return sorted(index for index in indices if 1 <= index <= upper_bound)
+
+
+async def _build_subscription_picker(
+    event: GroupMessageCreateEvent, operation: str, page: int = 1
+) -> Message:
+    """构造当前群、当前成员专属的订阅或退订编号选择面板。"""
+    group_id = group_openid(event)
+    async with get_session() as db_session:
+        subscriptions = await SubscribeManager.get_subscriptions_by_group(db_session, group_id)
+        subscribed_ids = {str(sub.username) for sub in subscriptions}
+
+        if operation == "subscribe":
+            all_users = await UserManager.get_all_users(db_session)
+            candidates = [
+                (str(user.User_ID), str(user.User_Name))
+                for user in all_users
+                if str(user.User_ID) not in subscribed_ids
+            ]
+            title = "📬 订阅选择面板"
+            selection_command = "订阅选择"
+            direct_command = "订阅 <用户ID> [更多用户ID]"
+        else:
+            users = await UserManager.get_users_by_ids(db_session, list(subscribed_ids))
+            candidates = [
+                (user_id, str(users[user_id].User_Name) if user_id in users else "未知用户")
+                for user_id in sorted(subscribed_ids)
+            ]
+            title = "📭 退订选择面板"
+            selection_command = "取消订阅选择"
+            direct_command = "取消订阅 <用户ID> [更多用户ID]"
+
+    if not candidates:
+        empty_text = "本群已订阅全部可用用户。" if operation == "subscribe" else "本群当前没有订阅。"
+        return info(empty_text, title)
+
+    total_pages = (len(candidates) + PICKER_PAGE_SIZE - 1) // PICKER_PAGE_SIZE
+    page = min(max(page, 1), total_pages)
+    start = (page - 1) * PICKER_PAGE_SIZE
+    page_candidates = candidates[start:start + PICKER_PAGE_SIZE]
+    _set_picker_candidates(event, operation, [user_id for user_id, _ in page_candidates])
+
+    lines = [f"第 {page}/{total_pages} 页 · 共 {len(candidates)} 个用户", ""]
+    for index, (user_id, user_name) in enumerate(page_candidates, 1):
+        lines.append(f"{index}. {user_name}（`{user_id}`）")
+    lines.extend([
+        "",
+        f"选择多个：`{selection_command} 1 3 5`",
+        f"选择范围：`{selection_command} 1-10`",
+        f"也可直接发送：`{direct_command}`",
+    ])
+
+    keyboard_rows = [[("按编号选择", f"{selection_command} ", False)]]
+    navigation = []
+    panel_command = "订阅面板" if operation == "subscribe" else "退订面板"
+    if page > 1:
+        navigation.append(("上一页", f"{panel_command} {page - 1}", True))
+    if page < total_pages:
+        navigation.append(("下一页", f"{panel_command} {page + 1}", True))
+    if navigation:
+        keyboard_rows.append(navigation)
+    return quoted_card(title, "\n".join(lines)) + command_keyboard(keyboard_rows)
+
+
+async def _apply_picker_selection(
+    event: GroupMessageCreateEvent, operation: str, command: str
+) -> tuple[list[str], list[str]] | None:
+    """执行选择面板中当前页的编号操作，返回（成功、失败）用户 ID。"""
+    candidates = _get_picker_candidates(event, operation)
+    if candidates is None:
+        return None
+
+    indices = _parse_picker_indices(command, len(candidates))
+    if not indices:
+        return [], []
+
+    group_id = group_openid(event)
+    selected_users = [candidates[index - 1] for index in indices]
+    succeeded: list[str] = []
+    failed: list[str] = []
+    async with get_session() as db_session:
+        for user_id in selected_users:
+            try:
+                subscription_id = f"{user_id}-{group_id}"
+                if operation == "subscribe":
+                    existing = await SubscribeManager.get_Sign_by_student_id(db_session, subscription_id)
+                    if not existing:
+                        await SubscribeManager.create_signmsg(
+                            db_session,
+                            id=subscription_id,
+                            username=user_id,
+                            group=group_id,
+                        )
+                else:
+                    await SubscribeManager.delete_id(db_session, id=subscription_id)
+                succeeded.append(user_id)
+            except Exception as exception:
+                logger.error(f"选择面板{operation} {user_id} 失败: {exception}")
+                failed.append(user_id)
+
+    _set_picker_candidates(
+        event, operation, [user_id for user_id in candidates if user_id not in succeeded]
+    )
+    return succeeded, failed
 
 
 async def _get_joined_group_ids() -> set[str]:
@@ -297,19 +451,35 @@ async def handle_rss_cmd(event: GroupMessageCreateEvent,args: Message = CommandA
                 logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, rule=admin_group_rule)
-rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, rule=admin_group_rule)
-rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10, rule=admin_group_rule)
+rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, rule=group_rule)
+rss_unsub = on_command("rss_unsub", aliases={"取消订阅"}, priority=10, rule=group_rule)
+rss_list = on_command("rss_list", aliases={"订阅列表"}, priority=10, rule=superuser_group_rule)
+subscription_panel = on_command("订阅面板", aliases={"订阅选择面板"}, priority=10, rule=group_rule)
+unsubscribe_panel = on_command("退订面板", aliases={"取消订阅面板"}, priority=10, rule=group_rule)
+
+
+async def _show_picker(
+    event: GroupMessageCreateEvent, args: Message, operation: str
+) -> Message:
+    page = _parse_int(args.extract_plain_text().strip(), 1)
+    return await _build_subscription_picker(event, operation, page or 1)
+
+
+@subscription_panel.handle()
+async def handle_subscription_panel(event: GroupMessageCreateEvent, args: Message = CommandArg()):
+    await subscription_panel.finish(await _show_picker(event, args, "subscribe"))
+
+
+@unsubscribe_panel.handle()
+async def handle_unsubscribe_panel(event: GroupMessageCreateEvent, args: Message = CommandArg()):
+    await unsubscribe_panel.finish(await _show_picker(event, args, "unsubscribe"))
 
 @rss_sub.handle()
 async def handle_rss_sub(event: GroupMessageCreateEvent,args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     parts = _split_args(command)
     if not parts:
-        await rss_sub.finish(info(
-            "`订阅 aibaaiai`\n\n批量订阅：`订阅 用户1 用户2 用户3`",
-            "📖 订阅用法",
-        ))
+        await rss_sub.finish(await _build_subscription_picker(event, "subscribe"))
     group_id = group_openid(event)
 
     sheet1 = await User_get()
@@ -347,17 +517,14 @@ async def handle_rss_sub(event: GroupMessageCreateEvent,args: Message = CommandA
         msg_parts.append(f"📌 已存在 ({len(exist_list)}): {', '.join(exist_list)}")
     if invalid_list:
         msg_parts.append(f"❌ 无效用户 ({len(invalid_list)}): {', '.join(invalid_list)}")
-    await rss_sub.finish(success("\n\n".join(msg_parts), "📬 订阅结果"))
+    await rss_sub.finish(quoted_card("📬 订阅结果", "\n\n".join(msg_parts)))
 
 @rss_unsub.handle()
 async def handle_rss_unsub(event: GroupMessageCreateEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     parts = _split_args(command)
     if not parts:
-        await rss_unsub.finish(info(
-            "`取消订阅 aibaaiai`\n\n批量取消：`取消订阅 用户1 用户2 用户3`",
-            "📖 取消订阅用法",
-        ))
+        await rss_unsub.finish(await _build_subscription_picker(event, "unsubscribe"))
     group_id = group_openid(event)
 
     success_list = []
@@ -383,7 +550,7 @@ async def handle_rss_unsub(event: GroupMessageCreateEvent, args: Message = Comma
         msg_parts.append(f"✅ 取消成功 ({len(success_list)}): {', '.join(success_list)}")
     if not_exist_list:
         msg_parts.append(f"📌 未订阅 ({len(not_exist_list)}): {', '.join(not_exist_list)}")
-    await rss_unsub.finish(success("\n\n".join(msg_parts), "📭 取消订阅结果"))
+    await rss_unsub.finish(quoted_card("📭 取消订阅结果", "\n\n".join(msg_parts)))
 
 
 @rss_list.handle()
@@ -413,27 +580,18 @@ async def handle_rss_list(event: GroupMessageCreateEvent):
             user_ids = list(sub_list.keys())
             users_dict = await UserManager.get_users_by_ids(db_session, user_ids)
 
-            msg_buffer = "# 📋 当前订阅列表\n"
-            MAX_CHAR_PER_NODE = 3500
-
+            entries = []
             for user in sub_list:
                 user_detail = users_dict.get(user)
                 user_name = user_detail.User_Name if user_detail else "未知"
+                groups = "、".join(str(group) for group in sub_list[user])
+                entries.append(
+                    f"- 用户名：{user_name}\n"
+                    f"  用户 ID：`{user}`\n"
+                    f"  推送群组：{groups}"
+                )
 
-                # 构建单个用户的条目
-                entry = f"\n用户ID: {user}\n用户名: {user_name}\n"
-                for group in sub_list[user]:
-                    entry += f"    推送群组: {group}\n"
-
-                # 检查缓冲区长度，决定是否分节
-                if len(msg_buffer) + len(entry) > MAX_CHAR_PER_NODE:
-                    await rss_list.send(markdown(msg_buffer))
-                    msg_buffer = "# 📋 订阅列表（续）\n" + entry
-                else:
-                    msg_buffer += entry
-
-            if msg_buffer:
-                await rss_list.send(markdown(msg_buffer))
+            await rss_list.send(quoted_card("📋 当前订阅列表", "\n\n".join(entries)))
 
         except SQLAlchemyError as e:
             logger.opt(exception=True).error(f"数据库操作错误: {e}")
@@ -441,8 +599,8 @@ async def handle_rss_list(event: GroupMessageCreateEvent):
 
 
 
-user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, rule=admin_group_rule)
-user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, rule=admin_group_rule)
+user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, rule=superuser_group_rule)
+user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, rule=superuser_group_rule)
 user_list = on_command("user_list", aliases={"用户列表"}, priority=10, rule=group_rule)
 @user_sub.handle()
 async def handle_user_sub(args: Message = CommandArg()):
@@ -532,17 +690,20 @@ async def handle_user_list(event: GroupMessageCreateEvent):
                 await user_list.send(info("当前没有可访问用户。", "👥 用户列表"))
             else:
                 all_users = await UserManager.get_all_users(db_session)
-                msg_parts = ["# 📋 当前可访问用户列表\n"]
+                msg_parts = []
                 for user in all_users:
-                    msg_parts.append(f"{user.User_Name}({user.User_ID})\n")
-                msg_parts.append("\n如需增加新用户，请联系管理员，或发邮件至：public@tano.asia")
-                await user_list.send(markdown("".join(msg_parts)))
+                    msg_parts.append(f"- {user.User_Name}（`{user.User_ID}`）")
+                await user_list.send(quoted_card(
+                    "📋 当前可访问用户列表",
+                    "\n".join(msg_parts),
+                    "如需增加新用户，请联系管理员，或发邮件至：public@tano.asia",
+                ))
 
         except SQLAlchemyError as e:
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-find = on_command("查询", priority=10, rule=admin_group_rule)
+find = on_command("查询", priority=10, rule=group_rule)
 @find.handle()
 async def handle_find(event: GroupMessageCreateEvent, args: Message = CommandArg()):
     """
@@ -552,7 +713,7 @@ async def handle_find(event: GroupMessageCreateEvent, args: Message = CommandArg
         command = args.extract_plain_text().strip()
         parts = _split_args(command)
         if command.startswith("群组"):
-            if len(parts) >= 2:
+            if len(parts) >= 2 and await is_superuser(event):
                 group_id = parts[1]
             else:
                 group_id = group_openid(event)
@@ -562,13 +723,18 @@ async def handle_find(event: GroupMessageCreateEvent, args: Message = CommandArg
                 if not subscriptions:
                     await find.send(info(f"群 `{group_id}` 当前没有订阅。", "🔎 查询结果"))
                 else:
-                    msg_parts = [f"# 📋 群订阅列表\n\n群 OpenID：`{group_id}`\n"]
+                    msg_parts = [f"群 OpenID：`{group_id}`", "订阅用户："]
                     for sub in subscriptions:
-                        msg_parts.append(f"{sub.username}\n")
-                    await find.send(markdown("".join(msg_parts)))
+                        msg_parts.append(f"- `{sub.username}`")
+                    await find.send(quoted_card("📋 群订阅列表", "\n".join(msg_parts)))
             except SQLAlchemyError as e:
                 logger.opt(exception=False).error(f"数据库操作错误: {e}")
         elif command.startswith("用户"):
+            if not await is_superuser(event):
+                await find.finish(warning(
+                    "仅超级管理员可查询用户在全部群的订阅情况。",
+                    "🔎 查询用户",
+                ))
             if len(parts) < 2:
                 await find.finish(info("`查询 用户 <用户ID>`", "📖 查询用法"))
             user_id = parts[1]
@@ -578,10 +744,10 @@ async def handle_find(event: GroupMessageCreateEvent, args: Message = CommandArg
                 if not subscriptions:
                     await find.send(info(f"用户 `{user_id}` 当前没有订阅。", "🔎 查询结果"))
                 else:
-                    msg_parts = [f"# 📋 用户推送群组\n\n用户 ID：`{user_id}`\n"]
+                    msg_parts = [f"用户 ID：`{user_id}`", "推送群组："]
                     for sub in subscriptions:
-                        msg_parts.append(f"{sub.group}\n")
-                    await find.send(markdown("".join(msg_parts)))
+                        msg_parts.append(f"- `{sub.group}`")
+                    await find.send(quoted_card("📋 用户推送群组", "\n".join(msg_parts)))
             except SQLAlchemyError as e:
                 logger.opt(exception=False).error(f"数据库操作错误: {e}")
         else:
@@ -593,14 +759,14 @@ import_following = on_command(
     "import_following",
     aliases={"导入关注"},
     priority=10,
-    rule=admin_group_rule
+    rule=group_rule
 )
 
 import_following_private = on_command(
     "import_following",
     aliases={"导入关注"},
     priority=10,
-    rule=private_admin_rule,
+    rule=private_rule,
 )
 
 # 存储待确认的批量订阅 {group_id: [matched_users]}
@@ -716,7 +882,7 @@ async def handle_import_following_private(event: C2CMessageCreateEvent, args: Me
         else:
             msg_parts.append("✨ 所有匹配用户均已订阅")
 
-        await import_following_private.finish(info("".join(msg_parts), "📊 导入关注结果"))
+        await import_following_private.finish(quoted_card("📊 导入关注结果", "".join(msg_parts)))
 
     except Exception as e:
         logger.opt(exception=True).error(f"导入关注失败: {e}")
@@ -727,7 +893,7 @@ async def handle_import_following_private(event: C2CMessageCreateEvent, args: Me
 confirm_batch_sub = on_command(
     "确认订阅",
     priority=10,
-    rule=admin_group_rule
+    rule=group_rule
 )
 
 
@@ -776,22 +942,47 @@ async def handle_confirm_batch_sub(event: GroupMessageCreateEvent):
 # 按编号订阅
 sub_by_index = on_command(
     "订阅编号",
+    aliases={"订阅选择"},
     priority=10,
-    rule=admin_group_rule
+    rule=group_rule
 )
 
 
 @sub_by_index.handle()
 async def handle_sub_by_index(event: GroupMessageCreateEvent, args: Message = CommandArg()):
-    """按编号订阅待确认列表中的用户"""
+    """按编号订阅选择面板或导入关注待确认列表中的用户。"""
     group_id = group_openid(event)
+    command = args.extract_plain_text().strip()
+
+    if _get_picker_candidates(event, "subscribe") is not None:
+        if not command:
+            await sub_by_index.finish(info(
+                "`订阅选择 1 3 5`\n\n或：`订阅选择 1-10`",
+                "📖 订阅选择用法",
+            ))
+        result = await _apply_picker_selection(event, "subscribe", command)
+        if result is None:
+            await sub_by_index.finish(warning(
+                "选择面板已过期，请重新发送 `订阅`。", "📬 订阅选择"
+            ))
+        succeeded, failed = result
+        if not succeeded and not failed:
+            await sub_by_index.finish(error(
+                "请输入当前页内的有效编号，例如 `订阅选择 1 3 5`。", "📬 订阅选择"
+            ))
+        await sub_by_index.finish(quoted_card(
+            "📬 订阅完成",
+            f"成功：{len(succeeded)} 个\n"
+            f"用户：{', '.join(succeeded) or '无'}\n"
+            f"失败：{len(failed)} 个"
+            + (f"（{', '.join(failed)}）" if failed else ""),
+        ))
 
     if group_id not in pending_batch_subscribe or not pending_batch_subscribe[group_id]:
         await sub_by_index.finish(warning(
             "没有待确认的订阅，请先在私聊中使用 `导入关注`。", "📬 按编号订阅"
         ))
 
-    command = args.extract_plain_text().strip()
     if not command:
         await sub_by_index.finish(info(
             "`订阅编号 1 3 5`\n\n或：`订阅编号 1-10`",
@@ -856,10 +1047,51 @@ async def handle_sub_by_index(event: GroupMessageCreateEvent, args: Message = Co
     if not pending_batch_subscribe[group_id]:
         del pending_batch_subscribe[group_id]
 
-    await sub_by_index.finish(success(
+    await sub_by_index.finish(quoted_card(
+        "📬 订阅完成",
         f"- 成功：{success_count} 个（{', '.join(subscribed_users)}）\n"
         f"- 失败：{fail_count} 个",
-        "📬 订阅完成",
+    ))
+
+
+unsub_by_index = on_command(
+    "取消订阅选择",
+    aliases={"退订选择", "取消订阅编号"},
+    priority=10,
+    rule=group_rule,
+)
+
+
+@unsub_by_index.handle()
+async def handle_unsub_by_index(event: GroupMessageCreateEvent, args: Message = CommandArg()):
+    """按编号取消订阅选择面板中的用户。"""
+    command = args.extract_plain_text().strip()
+    if _get_picker_candidates(event, "unsubscribe") is None:
+        await unsub_by_index.finish(warning(
+            "没有可用的退订选择面板，请先发送 `取消订阅`。", "📭 退订选择"
+        ))
+    if not command:
+        await unsub_by_index.finish(info(
+            "`取消订阅选择 1 3 5`\n\n或：`取消订阅选择 1-10`",
+            "📖 退订选择用法",
+        ))
+
+    result = await _apply_picker_selection(event, "unsubscribe", command)
+    if result is None:
+        await unsub_by_index.finish(warning(
+            "选择面板已过期，请重新发送 `取消订阅`。", "📭 退订选择"
+        ))
+    succeeded, failed = result
+    if not succeeded and not failed:
+        await unsub_by_index.finish(error(
+            "请输入当前页内的有效编号，例如 `取消订阅选择 1 3 5`。", "📭 退订选择"
+        ))
+    await unsub_by_index.finish(quoted_card(
+        "📭 退订完成",
+        f"成功：{len(succeeded)} 个\n"
+        f"用户：{', '.join(succeeded) or '无'}\n"
+        f"失败：{len(failed)} 个"
+        + (f"（{', '.join(failed)}）" if failed else ""),
     ))
 
 
@@ -895,16 +1127,15 @@ async def handle_list_article(event: GroupMessageCreateEvent,args: Message = Com
             if not data.get("entries"):
                 await list_article.finish(info("该用户暂无动态，或用户不存在。", "🐦 文章列表"))
 
-            # 处理最新一条推文
-            msg = f"# 🐦 @{username} 的动态列表\n"
+            entries = []
             num = len(data.get("entries"))
             for i in range(0,num):
                 latest = data.get("entries")[i]
-                msg += f"\n{i}. {latest.title}\n"
+                entries.append(f"{i}. {latest.title}")
 
-            await list_article.finish(markdown(msg))
+            await list_article.finish(quoted_card(f"🐦 @{username} 的动态列表", "\n".join(entries)))
 
-group_config = on_command("群组配置", priority=10, rule=admin_group_rule)
+group_config = on_command("群组配置", priority=10, rule=group_rule)
 @group_config.handle()
 async def group_config_(event: GroupMessageCreateEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
@@ -912,30 +1143,33 @@ async def group_config_(event: GroupMessageCreateEvent, args: Message = CommandA
     try:
         parts = _split_args(command)
         if not parts:
-            parts = ["1", "0", "1", "1", "0"]
-        if len(parts) != 5:
+            parts = ["1", "0", "1", "1"]
+        if len(parts) != 4:
             await group_config.finish(info(
-                "`群组配置 [1/0 1/0 1/0 1/0 1/0]`\n\n"
-                "依次为：转发、自我转发、翻译、图片提示、合并显示。",
+                "`群组配置 <转发> <自我转发> <翻译> <图片提示>`\n\n"
+                "每项填写 `1`（开）或 `0`（关），顺序如下：\n"
+                "1. 转发：博主转发他人的动态是否推送\n"
+                "2. 自我转发：博主转发自己的动态是否推送\n"
+                "3. 翻译：推送时是否附带中文翻译\n"
+                "4. 图片提示：发送图片前是否提示图片数量\n\n"
+                "推荐：`群组配置 1 0 1 1`",
                 "⚙️ 群组配置用法",
             ))
 
         values = [_parse_int(item) for item in parts]
         if any(item is None or item not in (0, 1) for item in values):
-            await group_config.finish(error("五个参数只能填写 `0` 或 `1`。", "⚙️ 群组配置"))
+            await group_config.finish(error("四个参数只能填写 `0` 或 `1`。", "⚙️ 群组配置"))
 
         if_need_trans = True if values[0] == 1 else False
         if_need_self_trans = True if values[1] == 1 else False
         if_need_translate = True if values[2] == 1 else False
         if_need_photo_num_mention = True if values[3] == 1 else False
-        if_need_merged_message = True if values[4] == 1 else False
 
         config_values = dict(
             if_need_trans=if_need_trans,
             if_need_self_trans=if_need_self_trans,
             if_need_translate=if_need_translate,
             if_need_photo_num_mention=if_need_photo_num_mention,
-            if_need_merged_message=if_need_merged_message,
         )
 
         async with (get_session() as db_session):
@@ -945,6 +1179,7 @@ async def group_config_(event: GroupMessageCreateEvent, args: Message = CommandA
                     await GroupconfigManager.create_signmsg(
                         db_session,
                         group_id=group_id,
+                        if_need_merged_message=True,
                         **config_values,
                     )
                     await group_config.finish(success(
@@ -967,7 +1202,7 @@ async def group_config_(event: GroupMessageCreateEvent, args: Message = CommandA
         await group_config.finish(warning("请输入正确的配置参数。", "⚙️ 群组配置"))
 
 
-view_config = on_command("查看配置", priority=10, rule=admin_group_rule)
+view_config = on_command("查看配置", priority=10, rule=group_rule)
 @view_config.handle()
 async def handle_view_config(event: GroupMessageCreateEvent):
     """查看当前群组的配置状态"""
@@ -985,8 +1220,7 @@ async def handle_view_config(event: GroupMessageCreateEvent):
             f"- 转发推文：{status(config_msg.if_need_trans)}\n"
             f"- 自我转发：{status(config_msg.if_need_self_trans)}\n"
             f"- 中文翻译：{status(config_msg.if_need_translate)}\n"
-            f"- 图片提示：{status(config_msg.if_need_photo_num_mention)}\n"
-            f"- 合并显示：{status(config_msg.if_need_merged_message)}"
+            f"- 图片提示：{status(config_msg.if_need_photo_num_mention)}"
         )
         await view_config.finish(info(msg, "⚙️ 当前群组配置"))
 
@@ -994,13 +1228,63 @@ async def handle_view_config(event: GroupMessageCreateEvent):
 help = on_command("/help", aliases={"/帮助","help","帮助"}, priority=10, rule=group_rule)
 @help.handle()
 async def handle_help(event: GroupMessageCreateEvent):
-    """
-    bot帮助
-    """
-    await help.send(markdown(config.help_msg_1))
-    await help.finish(markdown(config.help_msg_2))
+    """发送带 QQ 官方指令按钮的帮助面板。"""
+    group_keyboard = command_keyboard(
+        [
+            [
+                ("RSS·填ID", "rss <用户ID> [序号]", False),
+                ("文章·填ID", "文章列表 <用户ID>", False),
+            ],
+            [("👥 用户列表", "用户列表", True), ("ℹ️ 群信息", "群信息", True)],
+            [
+                ("订阅面板", "订阅", True),
+                ("退订面板", "取消订阅", True),
+            ],
+            [("📋 本群订阅", "查询 群组", True), ("⚙️ 查看配置", "查看配置", True)],
+            [("配置·填参", "群组配置 <转发1/0> <自我转发1/0> <翻译1/0> <图片提示1/0>", False)],
+        ]
+    )
+    await help.send(markdown(
+        config.help_msg_1
+        + "\n\n> 标有“填……”的按钮需要补充参数；点击后会在输入框中显示参数格式。"
+    ) + group_keyboard)
 
-send_msg = on_command("/send", aliases={"/发送"}, priority=10, rule=admin_group_rule)
+    if not await is_superuser(event):
+        await help.finish(markdown(
+            "> 以上为当前群所有成员可用的功能，群 OpenID 会自动从当前会话读取。\n\n"
+            "[项目主页](https://github.com/AhsokaTano26/nsybot)"
+        ))
+
+    advanced_keyboard = command_keyboard(
+        [
+            [
+                ("📚 全部订阅", "订阅列表", True),
+                ("查群·填ID", "查询 群组 <群OpenID>", False),
+                ("查人·填ID", "查询 用户 <用户ID>", False),
+            ],
+            [
+                ("加人·填参", "增加用户 <用户ID> <用户名> <平台名>", False),
+                ("删人·填ID", "删除用户 <用户ID>", False),
+                ("🧹 清理订阅", "清理失效订阅", True),
+            ],
+            [
+                ("📊 订阅统计", "订阅统计", True),
+                ("📈 发送统计", "发送统计", True),
+                ("🔄 刷新推送", "refresh", True),
+            ],
+            [
+                ("群发·填参", "/发送 <内容>", False),
+                ("📡 查看开关", "/信号", True),
+                ("✅ 启用推送", "/信号否", True),
+            ],
+        ]
+    )
+    await help.finish(markdown(
+        "# 🧰 超级管理员命令\n\n"
+        "> 标有“填……”的按钮需要补充参数；其余按钮可直接执行。"
+    ) + advanced_keyboard)
+
+send_msg = on_command("/send", aliases={"/发送"}, priority=10, rule=superuser_group_rule)
 @send_msg.handle()
 async def handle_send_msg(args: Message = CommandArg()):
     """
@@ -1030,13 +1314,13 @@ async def handle_send_msg(args: Message = CommandArg()):
         except Exception as e:
             logger.opt(exception=False).error(f"发送时发生错误: {e}")
 
-signal = on_command("/信号", priority=10, rule=admin_group_rule)
+signal = on_command("/信号", priority=10, rule=superuser_group_rule)
 @signal.handle()
 async def signal_():
     if_first_time_start = await rss_get().get_signal()
     await signal.finish(info(if_first_time_start, "📡 RSS 发送开关"))
 
-signal_on = on_command("/信号否", priority=10, rule=admin_group_rule)
+signal_on = on_command("/信号否", priority=10, rule=superuser_group_rule)
 @signal_on.handle()
 async def signal_on_():
     await rss_get().change_config()
@@ -1090,7 +1374,7 @@ async def refresh_article():
             logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
-refresh = on_command("refresh", priority=10, rule=admin_group_rule)
+refresh = on_command("refresh", priority=10, rule=superuser_group_rule)
 @refresh.handle()
 async def refresh_():
     """
@@ -1105,7 +1389,7 @@ async def refresh_():
     ))
 
 
-sub_stats = on_command("订阅统计", priority=10, rule=admin_group_rule)
+sub_stats = on_command("订阅统计", priority=10, rule=superuser_group_rule)
 @sub_stats.handle()
 async def handle_sub_stats():
     """查询总订阅群组数和总订阅数"""
@@ -1123,7 +1407,7 @@ async def handle_sub_stats():
         ))
 
 
-tweet_stats = on_command("发送统计", priority=10, rule=admin_group_rule)
+tweet_stats = on_command("发送统计", priority=10, rule=superuser_group_rule)
 @tweet_stats.handle()
 async def handle_tweet_stats():
     """查询过去24h发送的推文数"""
@@ -1180,7 +1464,7 @@ cleanup_orphan_subscriptions = on_command(
     "清理失效订阅",
     aliases={"清理群订阅", "清理失效群订阅"},
     priority=10,
-    rule=admin_group_rule,
+    rule=superuser_group_rule,
 )
 
 
@@ -1198,12 +1482,12 @@ async def handle_cleanup_orphan():
                 await send_group_message(
                     bot,
                     config.target_group_openid,
-                    info(report, "🧹 手动清理失效订阅报告"),
+                    quoted_card("🧹 手动清理失效订阅报告", report),
                 )
         except Exception as e:
             logger.error(f"发送清理报告失败: {e}")
 
-        await cleanup_orphan_subscriptions.finish(info(report, "🧹 清理失效订阅报告"))
+        await cleanup_orphan_subscriptions.finish(quoted_card("🧹 清理失效订阅报告", report))
     except Exception as e:
         logger.opt(exception=True).error(f"清理失效订阅失败: {e}")
         await cleanup_orphan_subscriptions.finish(error(str(e), "🧹 清理失效订阅失败"))
@@ -1225,7 +1509,7 @@ async def weekly_cleanup_orphan():
             await send_group_message(
                 bot,
                 config.target_group_openid,
-                info(report, "🧹 每周清理失效订阅报告"),
+                quoted_card("🧹 每周清理失效订阅报告", report),
             )
     except Exception as e:
         logger.opt(exception=True).error(f"定时清理失效订阅失败: {e}")

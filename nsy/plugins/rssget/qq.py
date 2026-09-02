@@ -7,11 +7,15 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
+from typing import Sequence
 from urllib.parse import urlparse
 
 import httpx
 from nonebot.adapters.qq import Bot, Event, Message, MessageSegment
 from nonebot.adapters.qq.event import C2CMessageCreateEvent, GroupMessageCreateEvent
+from nonebot.adapters.qq.models import (Action, Button, InlineKeyboard,
+                                        InlineKeyboardRow, MessageKeyboard,
+                                        Permission, RenderData)
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 # QQ Markdown 的实际限制会随消息类型调整。这里采用低于常见上限的保守值，
@@ -96,6 +100,42 @@ def quote_block(content: str) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in (content or "（无内容）").splitlines())
 
 
+def command_keyboard(
+    rows: Sequence[Sequence[tuple[str, str, bool]]],
+) -> MessageSegment:
+    """Create QQ command buttons.
+
+    Each item is ``(label, command, enter)``. ``enter=True`` directly sends a
+    command; ``False`` only fills it into the input box for required arguments.
+    """
+    keyboard_rows = []
+    for row_index, row in enumerate(rows):
+        buttons = []
+        for button_index, (label, command, enter) in enumerate(row):
+            buttons.append(
+                Button(
+                    id=f"nsy_help_{row_index}_{button_index}",
+                    render_data=RenderData(
+                        label=label,
+                        visited_label="已选择",
+                        style=1,
+                    ),
+                    action=Action(
+                        type=2,
+                        permission=Permission(type=2),
+                        data=command,
+                        enter=enter,
+                        reply=False,
+                        unsupport_tips="当前 QQ 客户端不支持快捷指令，请手动发送命令。",
+                    ),
+                )
+            )
+        keyboard_rows.append(InlineKeyboardRow(buttons=buttons))
+    return MessageSegment.keyboard(
+        MessageKeyboard(content=InlineKeyboard(rows=keyboard_rows))
+    )
+
+
 def card(title: str, body: str) -> MessageSegment:
     """Create a consistent QQ Markdown card for command and status replies."""
     return markdown(f"# {title}\n\n{body.strip()}")
@@ -107,6 +147,25 @@ def success(body: str, title: str = "✅ 操作完成") -> MessageSegment:
 
 def info(body: str, title: str = "ℹ️ 提示") -> MessageSegment:
     return card(title, body)
+
+
+def quoted_card(title: str, body: str, footer: str | None = None) -> MessageSegment:
+    """Create a card whose variable-length details are rendered as a quote.
+
+    ``markdown`` applies the shared QQ message-length limit and adds a clear
+    truncation notice when needed, so callers can safely render large lists in
+    one consistent message. A footer stays outside the quote and is retained
+    even when the list itself needs truncation.
+    """
+    header = f"# {title}\n\n"
+    quoted_body = quote_block(body.strip())
+    if not footer:
+        return markdown(f"{header}{quoted_body}")
+
+    suffix = f"\n\n{footer.strip()}"
+    body_limit = max(0, MAX_MARKDOWN_CHARS - len(header) - len(suffix))
+    quoted_body = truncate_markdown(quoted_body, body_limit)
+    return MessageSegment.markdown(f"{header}{quoted_body}{suffix}")
 
 
 def warning(body: str, title: str = "⚠️ 请注意") -> MessageSegment:

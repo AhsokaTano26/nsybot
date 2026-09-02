@@ -4,7 +4,6 @@ import random
 import feedparser
 import httpx
 from nonebot import get_bot, get_plugin_config
-from nonebot.adapters.qq import MessageSegment
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 
@@ -15,8 +14,7 @@ from .models_method import (ContentManager, DetailManager, PlantformManager,
                             UserManager)
 from .trans_msg import if_self_trans, if_trans
 from .update_text import get_text, update_text
-from .qq import (article_card, download_image, error, file_image, info,
-                 quote_block, send_group_message)
+from .qq import article_card, download_image, error, file_image, info, send_group_message
 
 config = get_plugin_config(Config)
 
@@ -53,7 +51,6 @@ _DEFAULT_GROUP_CONFIG = {
     "if_need_self_trans": False,
     "if_need_translate": True,
     "if_need_photo_num_mention": True,
-    "if_need_merged_message": True,
 }
 
 
@@ -65,7 +62,6 @@ def _parse_group_config(group_config) -> dict:
             "if_need_self_trans": group_config.if_need_self_trans,
             "if_need_translate": group_config.if_need_translate,
             "if_need_photo_num_mention": group_config.if_need_photo_num_mention,
-            "if_need_merged_message": group_config.if_need_merged_message,
         }
     return _DEFAULT_GROUP_CONFIG
 
@@ -155,56 +151,26 @@ class rss_get():
         if_need_user_trans = gc["if_need_trans"]
         if_need_self_trans = gc["if_need_self_trans"]
         if_need_translate = gc["if_need_translate"]
-        if_need_photo_num_mention = gc["if_need_photo_num_mention"]
-        if_need_merged_message = gc["if_need_merged_message"]
 
         if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
             translation = None
             if if_need_trans and if_need_translate:
                 translation = content.get("trans_text") or "（暂无翻译）"
 
-            if if_need_merged_message:
-                async with _msg_semaphore:
-                    await self.handle_merge_send(
-                        group_id=group_id, content=content, translation=translation
-                    )
-            else:
-                async with _msg_semaphore:
-                    await send_group_message(bot, group_id, article_card(content))
-
-                if translation:
-                    async with _msg_semaphore:
-                        await send_group_message(
-                            bot,
-                            group_id,
-                            info(
-                                f"{quote_block(translation)}\n\n"
-                                f"> 翻译由 {config.model_name} 提供",
-                                "🌐 中文翻译",
-                            ),
-                        )
-
-                logger.info("成功发送文字信息")
-
-                # 发送图片（单独处理）
-                if content["images"]:
-                    if if_need_photo_num_mention:
-                        async with _msg_semaphore:
-                            await send_group_message(
-                                bot, group_id,
-                                info(
-                                    f"共 {len(content['images'])} 张，正在逐张发送。",
-                                    "🖼️ 图片附件",
-                                ),
-                            )
-                        for index, img_url in enumerate(content["images"], 1):
-                            await self.send_qq_image(img_url, group_id)
-
-                logger.info("成功发送图片信息")
+            async with _msg_semaphore:
+                await self.handle_markdown_send(
+                    group_id=group_id,
+                    content=content,
+                    translation=translation,
+                    if_need_photo_num_mention=if_need_photo_num_mention,
+                )
 
     @staticmethod
-    async def handle_merge_send(
-        group_id: str, content: dict, translation: str | None = None
+    async def handle_markdown_send(
+        group_id: str,
+        content: dict,
+        translation: str | None = None,
+        if_need_photo_num_mention: bool = True,
     ):
         bot = get_bot()
         # 官方 QQ 群不支持 OneBot 自定义合并转发节点；将原文和翻译合为
@@ -215,7 +181,14 @@ class rss_get():
                 group_id,
                 article_card(content, translation, config.model_name if translation else None),
             )
-            for img_url in content.get("images") or []:
+            images = content.get("images") or []
+            if images and if_need_photo_num_mention:
+                await send_group_message(
+                    bot,
+                    group_id,
+                    info(f"共 {len(images)} 张，正在逐张发送。", "🖼️ 图片附件"),
+                )
+            for img_url in images:
                 await rss_get().send_qq_image(img_url, group_id)
             logger.info(f"发送群 {group_id} Markdown 消息成功")
         except Exception as e:
