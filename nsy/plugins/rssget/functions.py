@@ -1,11 +1,10 @@
 import asyncio
 from datetime import datetime
-from typing import List
 import random
 import feedparser
 import httpx
 from nonebot import get_bot, get_plugin_config
-from nonebot.adapters.onebot.v11 import Message, MessageSegment
+from nonebot.adapters.qq import MessageSegment
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
 
@@ -16,6 +15,8 @@ from .models_method import (ContentManager, DetailManager, PlantformManager,
                             UserManager)
 from .trans_msg import if_self_trans, if_trans
 from .update_text import get_text, update_text
+from .qq import (article_card, download_image, error, file_image, info,
+                 quote_block, send_group_message)
 
 config = get_plugin_config(Config)
 
@@ -108,19 +109,16 @@ class rss_get():
 
         asyncio.create_task(_do_report())
 
-    async def send_onebot_image(self, img_url: str, group_id: int, retry_count: int = 0):
-        """优化后的图片发送，支持连接池复用和优雅重试"""
+    async def send_qq_image(self, img_url: str, group_id: str, retry_count: int = 0):
+        """发送官方 QQ 群图片，适配器负责将远程图片转为官方群富媒体。"""
         bot = get_bot()
         client = NetworkManager.get_client()
 
         try:
-            resp = await client.get(img_url, timeout=20)
-            resp.raise_for_status()
-
-            await bot.call_api("send_group_msg", **{
-                "group_id": group_id,
-                "message": MessageSegment.image(resp.content)
-            })
+            # Twitter CDN 常会拒绝 QQ 服务端的二次拉取；先由机器人下载，再
+            # 使用适配器的二进制上传流程发送给 QQ。
+            data, file_name = await download_image(img_url, client)
+            await send_group_message(bot, group_id, file_image(data, file_name))
             logger.info(f"图片发送成功")
 
         except (httpx.HTTPError, Exception) as e:
@@ -128,14 +126,16 @@ class rss_get():
                 wait_time = (retry_count + 1) * 2  # 2s, 4s, 6s
                 logger.warning(f"图片下载失败，{wait_time}s 后进行第 {retry_count + 1} 次重试: {e}")
                 await asyncio.sleep(wait_time)
-                await self.send_onebot_image(img_url, group_id, retry_count + 1)
+                await self.send_qq_image(img_url, group_id, retry_count + 1)
             else:
                 logger.error(f"图片发送达到最大重试次数: {img_url}")
                 # 只有最后一次失败才打扰用户
-                await bot.send_group_msg(group_id=group_id, message=f"❌ 图片下载失败: {str(e)[:30]}")
+                await send_group_message(
+                    bot, group_id, error(f"图片发送失败：{str(e)[:80]}", "🖼️ 图片发送失败")
+                )
 
     async def send_text(self,
-                        group_id: int,
+                        group_id: str,
                         content: dict,
                         if_need_trans: int,
                         if_is_self_trans: bool,
@@ -159,36 +159,30 @@ class rss_get():
         if_need_merged_message = gc["if_need_merged_message"]
 
         if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
-            # 构建文字消息
-            msg = [
-                f"🐦 用户 {content['username']} 最新动态\n"
-                f"⏰ {content['time']}\n"
-                f"🔗 {content['link']}"
-                "\n📝 正文："
-                f"{content['text']}"
-            ]
-
-            trans_msg = [
-                f"{content['trans_text']}"
-                f"\n【翻译由{config.model_name}提供】"
-            ]
+            translation = None
+            if if_need_trans and if_need_translate:
+                translation = content.get("trans_text") or "（暂无翻译）"
 
             if if_need_merged_message:
                 async with _msg_semaphore:
-                    await self.handle_merge_send(group_id=group_id, msg=msg, trans_msg=trans_msg, content=content)
+                    await self.handle_merge_send(
+                        group_id=group_id, content=content, translation=translation
+                    )
             else:
                 async with _msg_semaphore:
-                    await bot.call_api("send_group_msg", **{
-                        "group_id": group_id,
-                        "message": "\n".join(msg)
-                    })
+                    await send_group_message(bot, group_id, article_card(content))
 
-                if if_need_trans and if_need_translate:
+                if translation:
                     async with _msg_semaphore:
-                        await bot.call_api("send_group_msg", **{
-                            "group_id": group_id,
-                            "message": "\n".join(trans_msg)
-                        })
+                        await send_group_message(
+                            bot,
+                            group_id,
+                            info(
+                                f"{quote_block(translation)}\n\n"
+                                f"> 翻译由 {config.model_name} 提供",
+                                "🌐 中文翻译",
+                            ),
+                        )
 
                 logger.info("成功发送文字信息")
 
@@ -196,70 +190,36 @@ class rss_get():
                 if content["images"]:
                     if if_need_photo_num_mention:
                         async with _msg_semaphore:
-                            await bot.call_api("send_group_msg", **{
-                                "group_id": group_id,
-                                "message": f"🖼️ 检测到 {len(content['images'])} 张图片..."
-                            })
+                            await send_group_message(
+                                bot, group_id,
+                                info(
+                                    f"共 {len(content['images'])} 张，正在逐张发送。",
+                                    "🖼️ 图片附件",
+                                ),
+                            )
                         for index, img_url in enumerate(content["images"], 1):
-                            await self.send_onebot_image(img_url, group_id)
+                            await self.send_qq_image(img_url, group_id)
 
                 logger.info("成功发送图片信息")
 
     @staticmethod
-    async def handle_merge_send(group_id, msg, trans_msg, content):
+    async def handle_merge_send(
+        group_id: str, content: dict, translation: str | None = None
+    ):
         bot = get_bot()
-        # --- 1. 准备节点内容 ---
-
-        forward_nodes = []
-
-        # 节点 1：原文
-        node1_content = MessageSegment.text(msg)
-        node1 = MessageSegment.node_custom(
-            user_id=config.self_id,
-            nickname="Ksm 初号机",
-            content=node1_content,
-        )
-        forward_nodes.append(node1)
-
-        # 节点 2：翻译
-        if None not in trans_msg:
-            node2_content = MessageSegment.text(trans_msg)
-            node2 = MessageSegment.node_custom(
-                user_id=config.self_id,
-                nickname="Ksm 初号机",
-                content=node2_content,
-            )
-            forward_nodes.append(node2)
-
-        # 节点3：图片
-        if content["images"]:
-            message_segments: List[MessageSegment] = [
-                MessageSegment.text("")
-            ]
-            for index, img_url in enumerate(content["images"], 1):
-                # 添加图片消息段
-                message_segments.append(
-                    MessageSegment.image(img_url)
-                )
-            node3_content = Message(message_segments)
-            node3 = MessageSegment.node_custom(
-                user_id=config.self_id,
-                nickname="Ksm 初号机",
-                content=node3_content,
-            )
-            forward_nodes.append(node3)
-
-
-        # --- 3. 打包发送 ---
-        # 将节点列表转换为一个包含所有转发节点的 Message 对象
-        forward_message = Message(forward_nodes)
-
+        # 官方 QQ 群不支持 OneBot 自定义合并转发节点；将原文和翻译合为
+        # 一条 Markdown，图片仍按官方群富媒体逐张发送。
         try:
-            # 发送合并打包消息
-            await bot.send_group_msg(group_id=group_id, message=forward_message)
-            logger.info(f"发送群 {group_id} 合并转发消息成功")
+            await send_group_message(
+                bot,
+                group_id,
+                article_card(content, translation, config.model_name if translation else None),
+            )
+            for img_url in content.get("images") or []:
+                await rss_get().send_qq_image(img_url, group_id)
+            logger.info(f"发送群 {group_id} Markdown 消息成功")
         except Exception as e:
-            logger.error(f"发送群 {group_id} 合并转发消息失败: {e}")
+            logger.error(f"发送群 {group_id} Markdown 消息失败: {e}")
 
 
     async def handle_rss(self, userid: str, group_id_list: list, group_configs: dict = None):

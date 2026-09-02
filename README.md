@@ -1,5 +1,5 @@
 <h1><div style="text-align: center;">文章转发bot</div></h1>
-<h4>这是一个以Python编写的QQ机器人插件，用于订阅RSS并实时以QQ消息推送</h4>
+<h4>这是一个以 Python 编写的 QQ 官方机器人插件，用于订阅 RSS 并实时以 QQ 消息推送</h4>
 
 ---
 ## 功能介绍
@@ -10,7 +10,7 @@
 - 对文章进行本地化储存，以减少对于Rsshub的访问次数，同时减少对百度翻译API的调用次数
 - 支持多平台订阅
 - 默认对自我转发内容不进行推送，对于引用内容进行删除
-- 使用Websocket推送
+- 使用 QQ 官方 Bot WebHook / OpenAPI 推送
 ---
 ## 使用指南
 - 考虑到有可能会订阅违规内容，因此本bot在订阅时会对订阅用户进行检查，允许访问列表储存在本地sqlite数据库中管理者可通过增加用户/删除用户/用户列表功能对可访问用户进行增加/删除/查看操作
@@ -59,19 +59,23 @@
 >   ![这是图片](/docs/img.png "Magic Gardens")  
 > 其中 ***name*** 为平台名，***url*** 为Rsshub路由文档所给出的前缀地址，***need_trans*** 为是否需要翻译，1为需要，0为不需要
 >   - 提供百度机器翻译、阿里机器翻译、Deepseek翻译类，可自行调用，默认为Deepseek翻译
+### QQ 官方 Bot 配置
+
+部署前须在 QQ 开放平台创建机器人，并按 [QQ 官方 Bot 部署说明](docs/qq-official-bot.md) 填写 `QQ_APP_ID`、`QQ_APP_SECRET`、管理员 OpenID 与群 OpenID。项目不再依赖 NapCat 或 OneBot。
+
 ### 本地部署
->本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)，请按如下步骤部署：
+>本 bot 基于 NoneBot2 框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)，请按如下步骤部署：
 1. 将本项目克隆到本地，在项目根目录下 ***data*** 文件夹下创建 ***db.sqlite3*** 文件，并提前写入平台数据  
 2. 复制`.env.exmaple`为`.env.prod`，填入你的配置项。更多配置项可参考`nsy\plugins\rssget\config.py`
 3. 创建`.env`文件，写入`ENVIRONMENT=prod`
-4. `nb run`命令启动
+4. `python run.py` 或 `nb run` 命令启动
 
 ### 开发
 >本bot基于nonebot2框架开发，需要本地安装[Nonebot CLI](https://nonebot.dev/docs/quick-start)，请按如下步骤部署：
 1. 将本项目克隆到本地，在项目根目录下 ***data*** 文件夹下创建 ***db.sqlite3*** 文件，并提前写入平台数据。  
 2. 复制`.env.exmaple`为`.env.dev`，填入你的配置项。更多配置项可参考`nsy\plugins\rssget\config.py`
 3. 创建`.env`文件，写入`ENVIRONMENT=dev`
-4. `nb run`命令启动
+4. `python run.py` 或 `nb run` 命令启动
 
 ---
 # 使用注意事项
@@ -85,5 +89,4 @@
 * [RSSHub](https://github.com/DIYgod/RSSHub)
 * [Nonebot](https://github.com/nonebot/nonebot2)
 * [百度机器翻译](https://cloud.baidu.com/doc/API/index.html)
-* [Napcat](https://napneko.github.io/guide/napcat)
-* [onebotv11](https://283375.github.io/onebot_v11_vitepress/)
+* [QQ 机器人官方文档](https://bot.q.qq.com/wiki/develop/api-v2/)

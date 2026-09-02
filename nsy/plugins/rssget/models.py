@@ -1,5 +1,5 @@
 from nonebot_plugin_orm import Model
-from sqlalchemy import Column, String, Text, DateTime, INT, BOOLEAN
+from sqlalchemy import Column, String, Text, DateTime, BOOLEAN
 
 
 class Detail(Model):
@@ -40,7 +40,8 @@ class Content(Model):
 
 class Groupconfig(Model):
     __tablename__ = "Group_config"
-    group_id = Column(INT, primary_key=True, nullable=False)
+    # QQ 官方接口使用 group_openid（非数字 QQ 群号）。
+    group_id = Column(String(255), primary_key=True, nullable=False)
     if_need_trans = Column(BOOLEAN, nullable=False)
     if_need_self_trans = Column(BOOLEAN, nullable=False)
     if_need_translate = Column(BOOLEAN, nullable=False)

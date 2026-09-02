@@ -4,10 +4,14 @@ from pydantic import BaseModel
 class Config(BaseModel):
     """Plugin Config Here"""
     # 基础配置
-    ignored_groups: list[int] = [200214779, 210146004, 524239640, 925265706, 929711368]
-    broadcast_ban_list: list[int] = []
+    # QQ 官方 Bot 不暴露 QQ 群号；这里及数据库中均使用 group_openid。
+    ignored_group_openids: list[str] = []
+    broadcast_ban_openids: list[str] = []
+    # 官方群聊事件不包含 OneBot 的群主/管理员角色。将可管理机器人的
+    # 成员 OpenID 配置在此处；SUPERUSER 也应填写同样的 OpenID。
+    admin_openids: list[str] = []
     if_first_time_start: bool = True
-    target_groups: int = 658521872
+    target_group_openid: str | None = None
 
     # RSSHub 配置
     rsshub_host: str = "https://rsshub.app"
@@ -23,9 +27,6 @@ class Config(BaseModel):
 
     # 更新时间配置
     refresh_time: int = 20
-
-    # 发送和并转发消息时所使用时QQ号
-    self_id: int = 10001
 
     # 帮助信息
     help_msg_1: str = """nsy 推文助手：订阅三步走
@@ -58,7 +59,7 @@ class Config(BaseModel):
 •导入关注列表（私聊）：导入关注
 🔹超级管理员命令：
 •查看全部订阅：订阅列表
-•查指定群订阅：查询 群组 群号
+•查指定群订阅：查询 群组 群 OpenID
 •查博主订阅群：查询 用户 用户ID
 •增加用户：增加用户 用户ID 用户名 平台
 •删除用户：删除用户 用户ID
@@ -95,4 +96,3 @@ https://github.com/AhsokaTano26/nsybot"""
 如果你直接发送 群组配置（不带数字），系统会默认按推荐配置运行。
 即：1 0 1 1 0
 ——————"""
-

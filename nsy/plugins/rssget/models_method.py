@@ -234,12 +234,12 @@ class GroupconfigManager:
         return {row[0] for row in result}
 
     @classmethod
-    async def get_Sign_by_group_id(cls, session: async_scoped_session, student_id: int) -> Optional[Groupconfig]:
+    async def get_Sign_by_group_id(cls, session: async_scoped_session, student_id: str) -> Optional[Groupconfig]:
         """根据 student_id 获取单个信息"""
         return await session.get(Groupconfig, student_id)
 
     @classmethod
-    async def get_all_configs(cls, session: async_scoped_session) -> dict[int, Groupconfig]:
+    async def get_all_configs(cls, session: async_scoped_session) -> dict[str, Groupconfig]:
         """获取所有群组配置"""
         result = await session.execute(select(Groupconfig))
         return {gc.group_id: gc for gc in result.scalars().all()}
@@ -259,7 +259,7 @@ class GroupconfigManager:
         return new_signmsg
 
     @classmethod
-    async def delete_id(cls, session: async_scoped_session, id: int) -> bool:
+    async def delete_id(cls, session: async_scoped_session, id: str) -> bool:
         """删除数据"""
         lanmsg = await cls.get_Sign_by_group_id(session, id)
         if lanmsg:
@@ -269,7 +269,7 @@ class GroupconfigManager:
         return False
 
     @classmethod
-    async def update_config(cls, session: async_scoped_session, group_id: int, **kwargs) -> bool:
+    async def update_config(cls, session: async_scoped_session, group_id: str, **kwargs) -> bool:
         """更新群组配置"""
         config_obj = await cls.get_Sign_by_group_id(session, group_id)
         if config_obj:

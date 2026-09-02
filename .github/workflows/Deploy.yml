@@ -1,17 +1,13 @@
 name: Deploy
 
 on:
-  workflow_run:
-    workflows:
-      - Docker Image CI
-    types:
-      - completed
-    branches: [main]
+  # 暂停 Docker Image CI 完成后的自动部署；需要时可在 Actions 页面手动运行。
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Start Deployment
         uses: bobheadxi/deployments@v1

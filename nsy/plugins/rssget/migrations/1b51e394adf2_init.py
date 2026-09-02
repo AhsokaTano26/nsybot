@@ -43,7 +43,7 @@ def upgrade(name: str = "") -> None:
     info={'bind_key': 'rssget'}
     )
     op.create_table('Group_config',
-    sa.Column('group_id', sa.INTEGER(), nullable=False),
+    sa.Column('group_id', sa.String(length=255), nullable=False),
     sa.Column('if_need_trans', sa.BOOLEAN(), nullable=False),
     sa.Column('if_need_self_trans', sa.BOOLEAN(), nullable=False),
     sa.Column('if_need_translate', sa.BOOLEAN(), nullable=False),
