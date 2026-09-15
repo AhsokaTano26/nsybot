@@ -305,7 +305,8 @@ git commit -m "feat: 新增定时推送插件的群注册表配置与消息定�
 
 **Files:**
 - Create: `nsy/plugins/broadcast/__init__.py`
-- Modify: `CLAUDE.md:52`（插件清单）、`CLAUDE.md:75-78`（定时任务清单）
+- Modify: `CLAUDE.md:52`（插件清单）、`CLAUDE.md:75-78`（定时任务清单）——**本地文件，
+  不进版本库**（`.gitignore:165` 忽略 `/CLAUDE.md`，该文件从未被跟踪），见 Step 7。
 
 **Interfaces:**
 - Consumes:
@@ -314,7 +315,7 @@ git commit -m "feat: 新增定时推送插件的群注册表配置与消息定�
   - `nsy.qq_utils` 的 `markdown`、`quote_block`、`send_group_message`、`download_image`、`file_image`、`success`、`error`、`user_openid`（Task 1）
 - Produces:
   - 模块级 `config: Config`、`scheduler`、`broadcast_cmd`
-  - `async def send_broadcast(key: str) -> None`
+  - `async def send_broadcast(key: str) -> bool`（`True` 仅表示 Markdown 文本已发出）
   - `_register_jobs() -> None`（模块导入时自动执行一次）
   - 超管命令 `推送 <代号>`
 
@@ -361,44 +362,56 @@ async def is_superuser(event: Event) -> bool:
         return False
 
 
-async def send_broadcast(key: str) -> None:
+async def send_broadcast(key: str) -> bool:
     """向该代号登记的群发送一条推送，供定时任务与手动命令共用。
 
     先发 Markdown 文本，再逐张发图片。文本发送失败即中止——没有配文时发图
     没有意义；单张图片失败只记日志并继续下一张。
+
+    返回 ``True`` 仅表示 Markdown 文本已成功发出（后续图片仍可能失败）；
+    未知代号、未配置群 OpenID、拿不到 bot 实例、文本发送失败均返回 ``False``。
     """
     message: BroadcastMessage | None = MESSAGES.get(key)
     if message is None:
         logger.error(f"未知的推送代号: {key}")
-        return
+        return False
 
     group_id = config.group_registry.get(key)
     if not group_id:
         logger.error(f"推送 {key} 未配置群 OpenID，已跳过")
-        return
+        return False
 
     try:
         bot = get_bot()
     except ValueError as e:
         logger.error(f"推送 {key} 未能获取 bot 实例: {e}")
-        return
+        return False
 
     try:
         await send_group_message(bot, group_id, markdown(message.render()))
     except Exception as e:
         logger.opt(exception=True).error(f"推送 {key} 文本发送失败: {e}")
-        return
+        return False
 
+    failed_images = 0
     for index, url in enumerate(message.images, start=1):
         try:
             data, file_name = await download_image(url)
             await send_group_message(bot, group_id, file_image(data, file_name))
         except Exception as e:
+            failed_images += 1
             logger.opt(exception=True).error(
                 f"推送 {key} 第 {index} 张图片发送失败: {e}"
             )
 
-    logger.info(f"推送 {key} 已完成，目标群 {group_id}")
+    if failed_images:
+        logger.warning(
+            f"推送 {key} 文本已发送，但有 {failed_images} 张图片失败，"
+            f"目标群 {group_id}"
+        )
+    else:
+        logger.info(f"推送 {key} 已完成，目标群 {group_id}")
+    return True
 
 
 def _register_jobs() -> None:
@@ -437,7 +450,13 @@ async def handle_broadcast(args: Message = CommandArg()):
             error(f"未知推送代号：{key or '（空）'}\n可用代号：{available}")
         )
 
-    await send_broadcast(key)
+    if not await send_broadcast(key):
+        await broadcast_cmd.finish(
+            error(
+                f"推送 {key} 未发出。请确认该代号的群 OpenID 已配置"
+                f"（GROUP_{key}），并查看日志中该次推送的具体原因。"
+            )
+        )
     await broadcast_cmd.finish(success(f"已向 {key} 登记的群发送推送"))
 ```
 
@@ -485,6 +504,10 @@ Run:
 ```bash
 cd /Users/tano/Documents/GitHub/personal/nsybot && GROUP_CQU_EF=test-openid PYTHONPATH=. .venv/bin/python -c "
 import asyncio
+
+import nonebot
+nonebot.init(driver='~none')
+
 import nsy.plugins.broadcast as b
 
 calls = []
@@ -502,7 +525,8 @@ b.get_bot = lambda: FakeBot()
 b.send_group_message = fake_send
 b.download_image = fake_download
 
-asyncio.run(b.send_broadcast('CQU_EF'))
+result = asyncio.run(b.send_broadcast('CQU_EF'))
+assert result is True, result
 
 assert len(calls) == 3, len(calls)
 group_ids = {c[0] for c in calls}
@@ -528,6 +552,10 @@ Run:
 ```bash
 cd /Users/tano/Documents/GitHub/personal/nsybot && GROUP_CQU_EF=test-openid PYTHONPATH=. .venv/bin/python -c "
 import asyncio
+
+import nonebot
+nonebot.init(driver='~none')
+
 import nsy.plugins.broadcast as b
 
 async def fake_send(bot, group_id, message):
@@ -535,7 +563,7 @@ async def fake_send(bot, group_id, message):
 
 b.get_bot = lambda: object()
 b.send_group_message = fake_send
-asyncio.run(b.send_broadcast('NOPE'))
+assert asyncio.run(b.send_broadcast('NOPE')) is False
 print('unknown key OK')
 " 2>&1 | tail -3
 ```
@@ -549,7 +577,11 @@ cd /Users/tano/Documents/GitHub/personal/nsybot && grep -rn 'on_command("推送"
 ```
 Expected: 只有一行命中，即 `nsy/plugins/broadcast/__init__.py`。
 
-- [ ] **Step 7: 更新 `CLAUDE.md` 插件清单**
+- [ ] **Step 7: 更新 `CLAUDE.md` 插件清单（仅本地，不提交）**
+
+这一步是**本地编辑**：`CLAUDE.md` 被 `.gitignore:165` 的 `/CLAUDE.md` 忽略，且
+`git log --all -- CLAUDE.md` 为空（从未被跟踪），所以本次改动不进版本库，Step 8 也
+不会 `git add` 它。**不要**用 `git add -f` 绕过忽略规则。
 
 在 `CLAUDE.md:52` 的 Detect plugin 段落之后插入一个空行和：
 
@@ -566,9 +598,11 @@ Expected: 只有一行命中，即 `nsy/plugins/broadcast/__init__.py`。
 - [ ] **Step 8: Commit**
 
 ```bash
-git add nsy/plugins/broadcast/__init__.py CLAUDE.md
+git add nsy/plugins/broadcast/__init__.py
 git commit -m "feat: 新增定时推送插件的发送流程与超管手动触发命令"
 ```
+
+`CLAUDE.md` 不在 `git add` 里——它是被忽略的本地文件（Step 7），只保留磁盘上的修改。
 
 ---
 

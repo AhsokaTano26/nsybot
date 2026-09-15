@@ -151,15 +151,21 @@ MESSAGES: dict[str, BroadcastMessage] = {CQU_EF.key: CQU_EF}
 
 ## 发送流程
 
-`nsy/plugins/broadcast/__init__.py` 中的 `send_broadcast(key)`，定时任务与手动命令
-共用：
+`nsy/plugins/broadcast/__init__.py` 中的 `send_broadcast(key) -> bool`，定时任务与
+手动命令共用：
 
 1. 从 `MESSAGES` 取内容，从 `config.group_registry` 取 `group_openid`；任一缺失则
-   记 error 日志并返回。
-2. `get_bot()` 获取 bot 实例，抛 `ValueError` 时记 error 并返回。
-3. 发送 Markdown 消息。失败则记 error 并中止——没有配文时发图无意义。
+   记 error 日志并返回 `False`。
+2. `get_bot()` 获取 bot 实例，抛 `ValueError` 时记 error 并返回 `False`。
+3. 发送 Markdown 消息。失败则记 error 并中止——没有配文时发图无意义——返回 `False`。
 4. 逐张 `download_image(url)` → `file_image(data, file_name)` → `send_group_message`。
    单张失败只记 error 日志并继续下一张。
+5. 图片全部成功后返回 `True`，记 info 日志「推送 <代号> 已完成，目标群 …」；有图片
+   失败时同样返回 `True`（文本已在群里），但汇总日志降为 warning 并带上失败张数，
+   避免「已完成」掩盖部分失败。
+
+返回值语义：只有第 3 步的 Markdown 文本真正发出才返回 `True`，此后图片仍可能失败；
+第 1～3 步任一提前退出都返回 `False`。手动命令按这个布尔值选择回复哪种卡片。
 
 正常情况共发送 3 条消息：1 条 Markdown + 2 张图片。
 
@@ -203,7 +209,10 @@ broadcast_cmd = on_command("推送", priority=10, block=True, rule=Rule(is_super
 - 不受 `CQU_EF_PUSH_ENABLED` 限制——这正是它的用途：上线前先手动试发确认排版，
   开关关着也能用。
 - 用法 `推送 CQU_EF`。代号大小写不敏感。
-- 发送后回复成功卡片；代号未知则回复可用代号列表（`MESSAGES` 的键）。
+- 按 `send_broadcast` 的返回值回复：`True` 才回复成功卡片；`False` 回复失败卡片，
+  提示检查该代号的群 OpenID（`GROUP_<代号>`）是否配置，并查看日志中的具体原因
+  ——上线前试发时若群 OpenID 没配好，必须看到失败而不是「已发送」。
+  代号未知则回复可用代号列表（`MESSAGES` 的键）。
 - 命令名 `推送` 与现有命令无冲突（已核对 `nsy/plugins/*/__init__.py` 全部
   `on_command`）。
 - 不复用 `rssget` 的 `ignore_group` 规则：命令只发给注册表里的目标群，与命令
