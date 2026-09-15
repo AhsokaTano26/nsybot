@@ -158,17 +158,19 @@ git commit -m "refactor: 把通用 QQ 工具模块上移为 nsy.qq_utils"
 
 - [ ] **Step 1: 写 `nsy/plugins/broadcast/config.py`**
 
+代号只在 `_KNOWN_KEYS` 里写一次，`group_registry` 和 `push_enabled` 由它推导字段名，
+避免同一个代号在多个字典字面量里重复。
+
 ```python
 from pydantic import BaseModel
 
+# 已登记的群聊代号。新增群聊 = 在此加一个代号，并补一组对应字段：
+# GROUP_<代号> 提供群 OpenID，<代号>_PUSH_ENABLED 控制是否注册定时任务。
+_KNOWN_KEYS = ("CQU_EF",)
+
 
 class Config(BaseModel):
-    """定时推送配置。
-
-    群注册表由下方字段汇总：GROUP_<代号> 提供群 OpenID，
-    <代号>_PUSH_ENABLED 控制是否注册定时任务。
-    新增群聊 = 加一组字段 + 在 group_registry / push_enabled 里各登记一行。
-    """
+    """定时推送配置。"""
 
     group_cqu_ef: str | None = None
     cqu_ef_push_enabled: bool = False
@@ -176,12 +178,12 @@ class Config(BaseModel):
     @property
     def group_registry(self) -> dict[str, str]:
         """业务代号 -> group_openid；未配置 OpenID 的代号不会出现。"""
-        registry = {"CQU_EF": self.group_cqu_ef}
+        registry = {key: getattr(self, f"group_{key.lower()}") for key in _KNOWN_KEYS}
         return {key: openid for key, openid in registry.items() if openid}
 
     def push_enabled(self, key: str) -> bool:
         """该代号是否开启定时推送。"""
-        return {"CQU_EF": self.cqu_ef_push_enabled}.get(key, False)
+        return bool(getattr(self, f"{key.lower()}_push_enabled", False))
 ```
 
 - [ ] **Step 2: 写 `nsy/plugins/broadcast/messages.py`**
