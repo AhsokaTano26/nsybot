@@ -14,7 +14,7 @@ from .models_method import (ContentManager, DetailManager, PlantformManager,
                             UserManager)
 from .trans_msg import if_self_trans, if_trans
 from .update_text import get_text, update_text
-from .qq import article_card, download_image, error, file_image, info, send_group_message
+from nsy.qq_utils import article_card, download_image, error, file_image, info, send_group_message
 
 config = get_plugin_config(Config)
 

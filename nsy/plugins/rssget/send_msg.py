@@ -2,7 +2,7 @@ import httpx
 from nonebot import get_bot
 from nonebot.log import logger
 
-from .qq import download_image, error, file_image, send_group_message
+from nsy.qq_utils import download_image, error, file_image, send_group_message
 
 class SendMsg:
     async def send_qq_image(self, img_url: str, group_id: str, num: int = 0):

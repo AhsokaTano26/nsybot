@@ -28,10 +28,10 @@ from .models_method import (ContentManager, DetailManager, GroupconfigManager,
                             PlantformManager, SubscribeManager, UserManager)
 from .translation import Ali, BaiDu, DeepSeek, Ollama
 from .update_text import get_text, update_text
-from .qq import (article_card, command_keyboard, download_image, error,
-                 file_image, group_openid, info, is_c2c_event, is_group_event,
-                 markdown, quoted_card, send_group_message, success,
-                 user_openid, warning)
+from nsy.qq_utils import (article_card, command_keyboard, download_image,
+                          error, file_image, group_openid, info, is_c2c_event,
+                          is_group_event, markdown, quoted_card,
+                          send_group_message, success, user_openid, warning)
 
 __plugin_meta__ = PluginMetadata(
     name="Twitter RSS订阅",
