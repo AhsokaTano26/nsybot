@@ -117,7 +117,7 @@ broadcast_cmd = on_command("推送", priority=10, block=True, rule=Rule(is_super
 
 
 @broadcast_cmd.handle()
-async def handle_broadcast(args: Message = CommandArg()):
+async def handle_broadcast(args: Message = CommandArg()) -> None:
     """超管手动触发一次推送，不受推送开关限制。"""
     key = args.extract_plain_text().strip().upper()
     if key not in MESSAGES:

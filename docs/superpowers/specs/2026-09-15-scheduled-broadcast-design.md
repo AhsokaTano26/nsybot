@@ -43,7 +43,7 @@ QQ 工具函数（Markdown 截断、引用块、远程图片下载上传、主�
 | `nsy/plugins/broadcast/messages.py` | 新增 |
 | `nsy/plugins/broadcast/__init__.py` | 新增 |
 | `.env.example` | 新增 2 个环境变量 |
-| `CLAUDE.md` | 插件清单补充 broadcast |
+| `CLAUDE.md` | 插件清单补充 broadcast（**仅本地编辑，不提交**：该文件被 `.gitignore:165` 忽略且从未被跟踪） |
 
 ## 配置
 
@@ -224,8 +224,10 @@ broadcast_cmd = on_command("推送", priority=10, block=True, rule=Rule(is_super
 
 1. `render()` 是纯函数，写一次性脚本打印 `CQU_EF.render()`，与上文「渲染结果」
    逐字比对，确认引用块换行和 Markdown 链接正确。
-2. `python -c "import nsy.plugins.broadcast.messages"` 之类的导入检查改为在项目
-   环境的 Python 3.11 下验证 `nsy.qq_utils` 搬迁后三个 rssget 文件仍可导入。
+2. 导入与插件加载检查用仓库根目录的 `.venv/bin/python`（Python 3.13）执行，命令前
+   加 `PYTHONPATH=.`：系统 Python 都没有装 `nonebot.adapters.qq`。验证方式是用
+   `nonebot.init(driver="~none")` 加载插件——`rssget` 能完整加载证明 `nsy.qq_utils`
+   搬迁没有破坏调用方，`broadcast` 能加载并注册出 job 证明 Task 3 的接线正确。
 3. 端到端只能在真实群里验证：部署后先不带 `CQU_EF_PUSH_ENABLED` 启动，用
    `推送 CQU_EF` 手动发一次确认排版，再打开开关。
 
