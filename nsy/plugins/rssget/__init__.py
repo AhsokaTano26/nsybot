@@ -1493,7 +1493,12 @@ async def handle_cleanup_orphan():
         await cleanup_orphan_subscriptions.finish(error(str(e), "🧹 清理失效订阅失败"))
 
 
-@scheduler.scheduled_job(CronTrigger(day_of_week="mon", hour=10, minute=0), misfire_grace_time=60)
+# 已构造好的 CronTrigger 不会继承调度器上的 apscheduler.timezone，缺省会回落到
+# 进程本地时区，所以显式指定时区，避免清理时刻随运行环境的 TZ 漂移。
+@scheduler.scheduled_job(
+    CronTrigger(day_of_week="mon", hour=10, minute=0, timezone="Asia/Shanghai"),
+    misfire_grace_time=60,
+)
 async def weekly_cleanup_orphan():
     """每周一10:00定时清理失效群订阅"""
     try:

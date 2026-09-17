@@ -99,9 +99,16 @@ def _register_jobs() -> None:
         if not config.push_enabled(key):
             logger.info(f"定时推送 {key} 未启用，跳过注册")
             continue
+        # 已构造好的 CronTrigger 不会继承调度器上的 apscheduler.timezone，缺省
+        # 会回落到进程本地时区（容器里即 Dockerfile 的 TZ），所以显式指定时区，
+        # 让推送时刻只由代码决定。
         scheduler.add_job(
             send_broadcast,
-            CronTrigger(hour=",".join(map(str, message.hours)), minute=0),
+            CronTrigger(
+                hour=",".join(map(str, message.hours)),
+                minute=0,
+                timezone="Asia/Shanghai",
+            ),
             args=[key],
             id=f"broadcast:{key}",
             misfire_grace_time=60,
