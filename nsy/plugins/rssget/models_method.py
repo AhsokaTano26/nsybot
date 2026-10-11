@@ -166,6 +166,11 @@ class UserManager:
 
 class PlantformManager:
     @classmethod
+    async def get_all_platforms(cls, session: async_scoped_session) -> list[Plantform]:
+        result = await session.execute(select(Plantform).order_by(Plantform.name))
+        return list(result.scalars().all())
+
+    @classmethod
     async def get_all_student_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
         result = await session.execute(select(Plantform.name))
@@ -187,10 +192,27 @@ class PlantformManager:
         """删除数据"""
         lanmsg = await cls.get_Sign_by_student_id(session, id)
         if lanmsg:
-            await session.delete(lanmsg)
+            referenced = select(User.User_ID).where(User.Plantform == id).exists()
+            result = await session.execute(
+                delete(Plantform).where(Plantform.name == id, ~referenced)
+                .execution_options(synchronize_session=False)
+            )
+            if not result.rowcount:
+                raise ValueError("该平台仍有用户引用，请先删除这些用户或修改其平台，不能直接删除。")
             await session.commit()
             return True
         return False
+
+    @classmethod
+    async def update_config(
+        cls, session: async_scoped_session, name: str, url: str, need_trans: str,
+    ) -> None:
+        platform = await cls.get_Sign_by_student_id(session, name)
+        if platform is None:
+            raise ValueError(f"平台「{name}」不存在。")
+        platform.url = url
+        platform.need_trans = need_trans
+        await session.commit()
 
     @classmethod
     async def create_signmsg(cls, session: async_scoped_session, **kwargs) -> Plantform:

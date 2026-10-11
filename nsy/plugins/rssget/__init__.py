@@ -26,6 +26,7 @@ from .get_id import get_id
 from .models import Detail
 from .models_method import (ContentManager, DetailManager, GroupconfigManager,
                             PlantformManager, SubscribeManager, UserManager)
+from .platforms import PLATFORM_USAGES, execute_platform_command
 from .translation import Ali, BaiDu, DeepSeek, Ollama
 from .update_text import get_text, update_text
 from nsy.qq_utils import (article_card, command_keyboard, download_image,
@@ -599,6 +600,30 @@ async def handle_rss_list(event: GroupMessageCreateEvent):
 
 
 
+def _register_platform_command(command: str):
+    matcher = on_command(command, priority=10, rule=superuser_group_rule)
+
+    @matcher.handle()
+    async def handle_platform(args: Message = CommandArg()):
+        try:
+            async with get_session() as session:
+                result = await execute_platform_command(session, command, args.extract_plain_text())
+        except ValueError as exc:
+            await matcher.finish(error(str(exc), f"🗂️ {command}"))
+        except SQLAlchemyError:
+            logger.exception("平台管理数据库操作失败")
+            await matcher.finish(error("平台数据操作失败，请查看日志后重试。", f"🗂️ {command}"))
+        await matcher.finish(info(result, f"🗂️ {command}"))
+
+    return matcher
+
+
+platform_add = _register_platform_command("增加平台")
+platform_update = _register_platform_command("修改平台")
+platform_delete = _register_platform_command("删除平台")
+platform_list = _register_platform_command("平台列表")
+
+
 user_sub = on_command("user_sub", aliases={"增加用户"}, priority=10, rule=superuser_group_rule)
 user_unsub = on_command("user_unsub", aliases={"删除用户"}, priority=10, rule=superuser_group_rule)
 user_list = on_command("user_list", aliases={"用户列表"}, priority=10, rule=group_rule)
@@ -619,7 +644,10 @@ async def handle_user_sub(args: Message = CommandArg()):
             Plantform_in_list = await PlantformManager.get_Sign_by_student_id(
                 db_session, Plantform)
             if not Plantform_in_list:
-                await user_sub.send(error(f"平台 `{Plantform}` 不存在。", "👤 增加用户"))
+                await user_sub.send(error(
+                    f"平台 `{Plantform}` 不存在。请先用 `平台列表` 查看，或用 `增加平台` 创建平台。",
+                    "👤 增加用户",
+                ))
                 return
             # 检查数据库中是否已存在该 Student_id 的记录
             existing_lanmsg = await UserManager.get_Sign_by_student_id(
@@ -1277,10 +1305,17 @@ async def handle_help(event: GroupMessageCreateEvent):
                 ("📡 查看开关", "/信号", True),
                 ("✅ 启用推送", "/信号否", True),
             ],
+            [
+                ("平台列表", "平台列表", True),
+                ("加平台·填参", PLATFORM_USAGES["增加平台"], False),
+                ("改平台·填参", PLATFORM_USAGES["修改平台"], False),
+                ("删平台·填参", PLATFORM_USAGES["删除平台"], False),
+            ],
         ]
     )
     await help.finish(markdown(
         "# 🧰 超级管理员命令\n\n"
+        "平台管理：`平台列表`、`增加平台`、`修改平台`、`删除平台`。\n\n"
         "> 标有“填……”的按钮需要补充参数；其余按钮可直接执行。"
     ) + advanced_keyboard)
 
