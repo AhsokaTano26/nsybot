@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Config(BaseModel):
@@ -23,7 +23,7 @@ class Config(BaseModel):
     ut_url: str | None = None
 
     # 更新时间配置
-    refresh_time: int = 20
+    refresh_time: int = Field(default=20, gt=0)
 
     # 帮助信息
     help_msg_1: str = """# 🤖 nsy 推文助手 · 本群快捷操作

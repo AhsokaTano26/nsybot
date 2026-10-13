@@ -1,8 +1,10 @@
 import os
+import asyncio
 from datetime import datetime, timedelta
 
 from bs4 import BeautifulSoup
 from nonebot import get_plugin_config
+from nonebot.log import logger
 
 from .config import Config
 from .trans_msg import if_trans, remove_html_tag_soup
@@ -29,6 +31,9 @@ PLATFORMS = {
     9: None,
 }
 
+TRANSLATION_TIMEOUT = 60
+
+
 class Format:
     def __init__(self):
         pass
@@ -51,48 +56,57 @@ class Format:
 
         return text
 
-    async def extract_content(self, entry, if_need_trans) -> dict:
+    async def extract_content(self, entry, if_need_trans, translator=None) -> dict:
         """提取推文内容结构化数据"""
 
-        trans = PLATFORMS.get(TRANS_PLATFORM)
-        if trans is None:
-            trans = PLATFORMS[0]
-
-        dt = datetime(*entry.published_parsed[:6]) + timedelta(hours=8)
-        published = dt.strftime("%Y-%m-%d %H:%M")
+        parsed_date = entry.get("published_parsed") or entry.get("updated_parsed")
+        try:
+            dt = datetime(*parsed_date[:6]) + timedelta(hours=8)
+            published = dt.strftime("%Y-%m-%d %H:%M")
+        except (TypeError, ValueError, IndexError):
+            published = entry.get("published") or entry.get("updated") or "未知时间"
 
         # 清理文本内容
         await if_trans(entry)
-        clean_text_old = await remove_html_tag_soup(entry.description)
+        description = entry.get("description") or entry.get("summary") or ""
+        if not description and entry.get("content"):
+            description = entry["content"][0].get("value", "")
+        clean_text_old = await remove_html_tag_soup(description)
         clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
-        if if_need_trans == 1 and clean_text_old and trans:
-            trans_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n")  # 为翻译段落划分
-            trans_text1 = await trans.main(trans_text)
-            trans_text_final = trans_text1.replace("+", "\n")
-        else:
-            trans_text_final = None
+        clean_text = clean_text or entry.get("title") or ""
+        trans_text_final = None
+        if if_need_trans == 1 and clean_text:
+            trans = translator or PLATFORMS.get(TRANS_PLATFORM) or PLATFORMS[0]
+            try:
+                translated = await asyncio.wait_for(trans.main(clean_text), timeout=TRANSLATION_TIMEOUT)
+                if translated:
+                    trans_text_final = translated.replace("+", "\n")
+            except Exception as exc:
+                logger.warning(f"翻译暂不可用，将发送原文：{type(exc).__name__}")
 
         # 提取图片（优先媒体内容）
         images = []
-        for media in getattr(entry, "media_content", []):
-            if media.get("type", "").startswith("image/"):
+        for media in entry.get("media_content", []):
+            if media.get("type", "").startswith("image/") and media.get("url"):
                 images.append(media["url"])
 
         # 如果媒体内容为空，尝试从附件获取
         if not images:
-            for enc in getattr(entry, "enclosures", []):
-                if enc.get("type", "").startswith("image/"):
-                    images.append(enc.href)
+            for enc in entry.get("enclosures", []):
+                url = enc.get("href") or enc.get("url")
+                if enc.get("type", "").startswith("image/") and url:
+                    images.append(url)
 
-        if hasattr(entry, 'description'):
-            soup = BeautifulSoup(entry.description, 'html.parser')
+        if description:
+            soup = BeautifulSoup(description, 'html.parser')
             for img in soup.find_all('img', src=True):
                 images.append(img['src'])
+        images = list(dict.fromkeys(images))
 
         return {
-            "title": entry.title or None,
+            "title": entry.get("title") or None,
             "time": published or None,
-            "link": entry.link or None,
+            "link": entry.get("link") or None,
             "text": clean_text or None,
             "trans_text": trans_text_final or None,
             "images": images or None,

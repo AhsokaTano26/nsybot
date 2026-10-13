@@ -7,6 +7,10 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
+from contextlib import asynccontextmanager
+import asyncio
+import time
+from weakref import WeakValueDictionary
 from typing import Sequence
 from urllib.parse import urlparse
 
@@ -36,6 +40,46 @@ _IMAGE_HEADERS = {
 }
 
 
+class ActiveMessageLimiter:
+    """按机器人和群的主动消息配额串行安排发送，包含图片与提示。"""
+
+    def __init__(self, bot_interval=2.1, group_interval=3.1, clock=None, sleeper=None):
+        self.bot_interval = bot_interval
+        self.group_interval = group_interval
+        self.clock = clock or time.monotonic
+        self.sleeper = sleeper
+        self.bot_next = {}
+        self.group_next = {}
+        self.locks = WeakValueDictionary()
+
+    @asynccontextmanager
+    async def turn(self, bot_id: str, group_id: str):
+        lock = self.locks.get(bot_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.locks[bot_id] = lock
+        key = (bot_id, group_id)
+        async with lock:
+            now = self.clock()
+            delay = max(self.bot_next.get(bot_id, now), self.group_next.get(key, now)) - now
+            if delay > 0:
+                await (self.sleeper or asyncio.sleep)(delay)
+            try:
+                # 适配器可能先上传图片再发消息，整个调用都占用发送时隙。
+                yield
+            finally:
+                now = self.clock()
+                self.bot_next[bot_id] = now + self.bot_interval
+                self.group_next[key] = now + self.group_interval
+
+    async def wait(self, bot_id: str, group_id: str):
+        async with self.turn(bot_id, group_id):
+            pass
+
+
+active_message_limiter = ActiveMessageLimiter()
+
+
 def group_openid(event: GroupMessageCreateEvent) -> str:
     """返回 QQ 官方群聊的稳定标识。"""
     return str(event.group_openid)
@@ -62,7 +106,8 @@ async def send_group_message(
     """向官方群主动发送文本、Markdown 或富媒体消息。"""
     if isinstance(message, str):
         message = markdown(message)
-    return await bot.send_to_group(group_openid=str(group_id), message=message)
+    async with active_message_limiter.turn(str(getattr(bot, "self_id", id(bot))), str(group_id)):
+        return await bot.send_to_group(group_openid=str(group_id), message=message)
 
 
 async def send_group_markdown(bot: Bot, group_id: str, markdown: str):

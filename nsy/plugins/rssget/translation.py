@@ -146,26 +146,27 @@ class Ali:
 class DeepSeek:
     async def main(self, text):
         cfg = get_config()
-        client = AsyncOpenAI(
+        async with AsyncOpenAI(
             api_key=cfg.api_key,
-            base_url="https://api.deepseek.com"
-        )
-        response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是一名专业的翻译助手，请将用户输入的内容准确翻译成中文，不要添加任何额外解释。"
-                },
-                {
-                    "role": "user",
-                    "content": text
-                }
-            ],
-            stream=False
-        )
-        translated_text = response.choices[0].message.content
-        return translated_text
+            base_url="https://api.deepseek.com",
+            timeout=30,
+            max_retries=1,
+        ) as client:
+            response = await client.chat.completions.create(
+                model=cfg.model_name or "deepseek-v4-flash",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一名专业的翻译助手，请将用户输入的内容准确翻译成中文，不要添加任何额外解释。"
+                    },
+                    {
+                        "role": "user",
+                        "content": text
+                    }
+                ],
+                stream=False
+            )
+            return response.choices[0].message.content
 
 
 

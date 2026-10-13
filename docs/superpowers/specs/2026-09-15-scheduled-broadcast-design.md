@@ -183,7 +183,11 @@ def _register_jobs() -> None:
             continue
         scheduler.add_job(
             send_broadcast,
-            CronTrigger(hour=",".join(map(str, message.hours)), minute=0),
+            CronTrigger(
+                hour=",".join(map(str, message.hours)),
+                minute=0,
+                timezone="Asia/Shanghai",
+            ),
             args=[key],
             id=f"broadcast:{key}",
             misfire_grace_time=60,
@@ -193,6 +197,12 @@ def _register_jobs() -> None:
 ```
 
 在模块导入时调用一次。`misfire_grace_time=60` 与仓库现有任务一致。
+
+触发时刻一律是北京时间，`CronTrigger` 因此显式指定 `timezone="Asia/Shanghai"`。
+APScheduler 只把调度器的 `apscheduler.timezone` 注入字符串形式的触发器，已经
+构造好的 trigger 对象会被原样使用，缺省时回落到进程本地时区（容器里即
+`Dockerfile` 的 `TZ`）。不显式指定的话，推送时刻就隐式依赖运行环境，改动基础
+镜像或去掉 `TZ` 都会让推送整体偏移 8 小时且没有任何报错。
 
 APScheduler 使用内存 jobstore，进程重启后 `next_run_time` 按当前时间重算，因此
 重启不会补发已错过的 12:00 推送；`misfire_grace_time` 只在事件循环被阻塞导致

@@ -19,7 +19,7 @@ async def if_trans(entry):
 
 async def if_self_trans(username,entry):
     flag = "RT " + username
-    target = entry.title
+    target = str(entry.get("title") or "")
     flag = target.startswith(flag)
     if flag:
         logger.info("该推文为自我转发推文")

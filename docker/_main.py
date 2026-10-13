@@ -1,4 +1,5 @@
 import nonebot
-import bot  # noqa: F401
+from run import initialize_bot
 
+initialize_bot()
 app = nonebot.get_asgi()

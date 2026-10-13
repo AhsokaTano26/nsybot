@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
+import hashlib
+import json
 
 from nonebot_plugin_orm import async_scoped_session
 from sqlalchemy import delete, func, select, text
@@ -9,6 +11,65 @@ from .models import (Content, Detail, Groupconfig, Plantform,  # 导入你的模
 
 
 class DetailManager:
+    INIT_PREFIX = "rss-init:"
+    SKIP_PREFIX = "rss-skip:"
+    ROLLOUT_ID = "rss-init:rollout-v1"
+
+    @staticmethod
+    def _subscription_scope(user_id: str, group_id: str) -> str:
+        key = json.dumps([str(user_id), str(group_id)], ensure_ascii=False)
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    @classmethod
+    def initialization_id(cls, user_id: str, group_id: str) -> str:
+        return cls.INIT_PREFIX + cls._subscription_scope(user_id, group_id)
+
+    @classmethod
+    def skip_id(cls, user_id: str, group_id: str, article_id: str) -> str:
+        return f"{cls.SKIP_PREFIX}{cls._subscription_scope(user_id, group_id)}:{article_id}"
+
+    @classmethod
+    async def bootstrap_legacy_subscriptions(cls, session, pairs, seed_first_install=False) -> None:
+        """持久保存首次安装基线意图，并一次性兼容已有订阅。"""
+        if await session.get(Detail, cls.ROLLOUT_ID):
+            return
+        legacy = await session.scalar(select(Detail.id).where(
+            ~Detail.id.startswith(cls.INIT_PREFIX),
+            ~Detail.id.startswith(cls.SKIP_PREFIX),
+        ).limit(1))
+        if legacy or seed_first_install:
+            for user_id, group_id in pairs:
+                key = cls.initialization_id(user_id, group_id)
+                if not await session.get(Detail, key):
+                    state = "initialized" if legacy else "pending"
+                    session.add(Detail(id=key, summary=state, updated=None))
+        session.add(Detail(id=cls.ROLLOUT_ID, summary="rollout", updated=None))
+        await session.commit()
+
+    @classmethod
+    async def initialize_subscription(cls, session, user_id, group_id, entries):
+        key = cls.initialization_id(user_id, group_id)
+        marker = await session.get(Detail, key)
+        if marker and marker.summary == "initialized":
+            return
+        seeds = entries if marker and marker.summary == "pending" else entries[3:]
+        ids = [record_id for _, article_id in seeds for record_id in (
+            f"{article_id}-{group_id}", cls.skip_id(user_id, group_id, article_id),
+        )]
+        existing = await cls.get_existing_ids(session, ids)
+        for entry, article_id in seeds:
+            delivered_id = f"{article_id}-{group_id}"
+            skipped_id = cls.skip_id(user_id, group_id, article_id)
+            if delivered_id not in existing and skipped_id not in existing:
+                session.add(Detail(id=skipped_id, summary=entry.get("title"), updated=None))
+                existing.add(skipped_id)
+        if marker:
+            marker.summary = "initialized"
+        else:
+            session.add(Detail(id=key, summary="initialized", updated=None))
+        # 标记和旧条目基线原子提交；最新三篇的失败不会被下一轮误当作旧条目。
+        await session.commit()
+
     @classmethod
     async def get_all_student_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""

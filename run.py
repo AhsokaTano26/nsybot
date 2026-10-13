@@ -19,11 +19,16 @@ def prepare_environment() -> None:
     materialize_qq_bots()
 
 
-def main() -> None:
+def initialize_bot() -> None:
+    """初始化配置、适配器和插件；供本地与 Docker ASGI 入口共用。"""
     prepare_environment()
     nonebot.init()
     nonebot.get_driver().register_adapter(QQAdapter)
     nonebot.load_from_toml("pyproject.toml")
+
+
+def main() -> None:
+    initialize_bot()
     nonebot.run()
 
 

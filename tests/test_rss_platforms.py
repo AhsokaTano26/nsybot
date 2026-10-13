@@ -2,41 +2,22 @@
 
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-import nonebot
 from nonebot.adapters.qq import GroupMessageCreateEvent, Message
 from nonebot.exception import FinishedException
 from nonebot.rule import TrieRule
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from rss_test_support import load_rss_plugin
+
 
 class PlatformCommandTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         cls.test_root = tempfile.TemporaryDirectory(prefix="nsybot-platform-tests-")
-        try:
-            driver = nonebot.get_driver()
-        except ValueError:
-            nonebot.init(
-                driver="~fastapi",
-                sqlalchemy_database_url="sqlite+aiosqlite:///:memory:",
-                localstore_data_dir=Path(cls.test_root.name) / "data",
-                localstore_cache_dir=Path(cls.test_root.name) / "cache",
-                localstore_config_dir=Path(cls.test_root.name) / "config",
-                log_level="ERROR",
-            )
-            driver = nonebot.get_driver()
-        driver.config.api_key = "test-platform-key"
-        driver.config.superusers = {"admin-member"}
-        driver.config.command_start = {""}
-        nonebot.require("nonebot_plugin_orm")
-        plugin = nonebot.load_plugin("nsy.plugins.rssget")
-        if plugin is None:
-            raise AssertionError("RSS 插件应能加载")
-        cls.rss = plugin.module
+        cls.rss = load_rss_plugin(cls.test_root.name)
 
     @classmethod
     def tearDownClass(cls):

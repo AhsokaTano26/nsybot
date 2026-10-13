@@ -1,17 +1,19 @@
 import asyncio
 from datetime import datetime
 import random
+from urllib.parse import urlencode
+from weakref import WeakValueDictionary
 import feedparser
 import httpx
 from nonebot import get_bot, get_plugin_config
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
+from sqlalchemy.exc import SQLAlchemyError
 
 from .config import Config
 from .format_json import Format
 from .get_id import get_id
-from .models_method import (ContentManager, DetailManager, PlantformManager,
-                            UserManager)
+from .models_method import DetailManager, PlantformManager, UserManager
 from .trans_msg import if_self_trans, if_trans
 from .update_text import get_text, update_text
 from nsy.qq_utils import article_card, download_image, error, file_image, info, send_group_message
@@ -42,8 +44,17 @@ class NetworkManager:
             logger.info("网络连接池已关闭")
 
 
-# 消息发送全局限流（限制为3，防止过快发送导致风控，尤其是图片较多时）
+# 限制并行处理正文/附件的任务数；实际 QQ 发送频率由 qq_utils 控制。
 _msg_semaphore = asyncio.Semaphore(3)
+_delivery_locks = WeakValueDictionary()
+
+
+def _delivery_lock(key: str):
+    lock = _delivery_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _delivery_locks[key] = lock
+    return lock
 
 # 默认群组配置值
 _DEFAULT_GROUP_CONFIG = {
@@ -106,29 +117,26 @@ class rss_get():
         asyncio.create_task(_do_report())
 
     async def send_qq_image(self, img_url: str, group_id: str, retry_count: int = 0):
-        """发送官方 QQ 群图片，适配器负责将远程图片转为官方群富媒体。"""
-        bot = get_bot()
-        client = NetworkManager.get_client()
-
-        try:
-            # Twitter CDN 常会拒绝 QQ 服务端的二次拉取；先由机器人下载，再
-            # 使用适配器的二进制上传流程发送给 QQ。
-            data, file_name = await download_image(img_url, client)
-            await send_group_message(bot, group_id, file_image(data, file_name))
-            logger.info(f"图片发送成功")
-
-        except (httpx.HTTPError, Exception) as e:
-            if retry_count < 3:
-                wait_time = (retry_count + 1) * 2  # 2s, 4s, 6s
-                logger.warning(f"图片下载失败，{wait_time}s 后进行第 {retry_count + 1} 次重试: {e}")
-                await asyncio.sleep(wait_time)
-                await self.send_qq_image(img_url, group_id, retry_count + 1)
-            else:
-                logger.error(f"图片发送达到最大重试次数: {img_url}")
-                # 只有最后一次失败才打扰用户
-                await send_group_message(
-                    bot, group_id, error(f"图片发送失败：{str(e)[:80]}", "🖼️ 图片发送失败")
-                )
+        """附件最多尝试四次；失败告知用户，不让已发送的正文重复推送。"""
+        for attempt in range(retry_count, 4):
+            try:
+                data, file_name = await download_image(img_url, NetworkManager.get_client())
+                await send_group_message(get_bot(), group_id, file_image(data, file_name))
+                return True
+            except Exception as exc:
+                if attempt < 3:
+                    logger.warning(f"图片发送失败，将重试：{type(exc).__name__}")
+                    await asyncio.sleep((attempt + 1) * 2)
+                else:
+                    logger.error(f"图片发送达到最大重试次数：{img_url}")
+                    try:
+                        await send_group_message(
+                            get_bot(), group_id,
+                            error("正文已发送，但这张图片在重试后仍发送失败。", "🖼️ 图片发送失败"),
+                        )
+                    except Exception as warning_error:
+                        logger.warning(f"图片失败提示也未发送：{type(warning_error).__name__}")
+        return False
 
     async def send_text(self,
                         group_id: str,
@@ -143,7 +151,6 @@ class rss_get():
         group_config: 预加载的群组配置对象（可选），避免每次查库
         """
         logger.opt(exception=False).info(f"正在发送内容到群 {group_id}")
-        bot = get_bot()
         if_need_trans = True if if_need_trans == 1 else False
 
         # 使用预加载配置
@@ -151,8 +158,15 @@ class rss_get():
         if_need_user_trans = gc["if_need_trans"]
         if_need_self_trans = gc["if_need_self_trans"]
         if_need_translate = gc["if_need_translate"]
+        if_need_photo_num_mention = gc["if_need_photo_num_mention"]
 
-        if (if_is_self_trans and if_need_self_trans) or (if_is_trans and if_need_user_trans) or (not if_is_self_trans and not if_is_trans):
+        if if_is_self_trans:
+            allowed = if_need_self_trans
+        elif if_is_trans:
+            allowed = if_need_user_trans
+        else:
+            allowed = True
+        if allowed:
             translation = None
             if if_need_trans and if_need_translate:
                 translation = content.get("trans_text") or "（暂无翻译）"
@@ -164,179 +178,153 @@ class rss_get():
                     translation=translation,
                     if_need_photo_num_mention=if_need_photo_num_mention,
                 )
+            return True
+        return False
 
     @staticmethod
     async def handle_markdown_send(
-        group_id: str,
-        content: dict,
-        translation: str | None = None,
+        group_id: str, content: dict, translation: str | None = None,
         if_need_photo_num_mention: bool = True,
     ):
+        """正文发送失败由调用方重试；附件失败降级为带警告的正文成功。"""
         bot = get_bot()
-        # 官方 QQ 群不支持 OneBot 自定义合并转发节点；将原文和翻译合为
-        # 一条 Markdown，图片仍按官方群富媒体逐张发送。
         try:
             await send_group_message(
-                bot,
-                group_id,
+                bot, group_id,
                 article_card(content, translation, config.model_name if translation else None),
             )
-            images = content.get("images") or []
-            if images and if_need_photo_num_mention:
-                await send_group_message(
-                    bot,
-                    group_id,
-                    info(f"共 {len(images)} 张，正在逐张发送。", "🖼️ 图片附件"),
-                )
-            for img_url in images:
-                await rss_get().send_qq_image(img_url, group_id)
-            logger.info(f"发送群 {group_id} Markdown 消息成功")
-        except Exception as e:
-            logger.error(f"发送群 {group_id} Markdown 消息失败: {e}")
+        except Exception as exc:
+            logger.error(f"发送群 {group_id} RSS 正文失败：{exc}")
+            raise
+        images = list(dict.fromkeys(content.get("images") or []))
+        if images and if_need_photo_num_mention:
+            try:
+                await send_group_message(bot, group_id, info(
+                    f"共 {len(images)} 张，正在逐张发送。", "🖼️ 图片附件",
+                ))
+            except Exception as exc:
+                logger.warning(f"图片数量提示未发送，继续发送附件：{type(exc).__name__}")
+        failures = 0
+        for url in images:
+            if not await rss_get().send_qq_image(url, group_id):
+                failures += 1
+        if failures:
+            logger.warning(f"群 {group_id} RSS 正文已发送，{failures} 张附件失败")
+        else:
+            logger.info(f"群 {group_id} RSS 正文与附件发送完成")
 
+    async def _fetch_user_feed(self, userid: str, route: str, platform_name: str):
+        hosts = list(dict.fromkeys([config.rsshub_host, *(config.rsshub_host_back or [])]))
+        for host in hosts:
+            if not host:
+                continue
+            data = await fetch_feed(f"{host.rstrip('/')}/{route.lstrip('/')}{userid}")
+            if data.get("entries") and not data.get("error"):
+                if config.ut_url:
+                    separator = "&" if "?" in config.ut_url else "?"
+                    await self.report_status(config.ut_url + separator + urlencode({
+                        "status": "up", "msg": f"{platform_name} 可用", "ping": "",
+                    }))
+                return data
+            logger.warning(f"用户 {userid} 的 RSS 源无有效条目，尝试下一个源")
+        if config.ut_url:
+            separator = "&" if "?" in config.ut_url else "?"
+            await self.report_status(config.ut_url + separator + urlencode({
+                "status": "down", "msg": f"{platform_name} 所有源均无有效条目", "ping": "",
+            }))
+        return None
 
     async def handle_rss(self, userid: str, group_id_list: list, group_configs: dict = None):
-        """
-        处理RSS推送
-        group_configs: 预加载的 {group_id: Groupconfig} 字典（可选）
-        """
-        async with (get_session() as db_session):
-            # 不再调用 User_get() 全表查询：调用方已确认用户有效
-            user = await UserManager.get_Sign_by_student_id(db_session, userid)
+        async with get_session() as session:
+            user = await UserManager.get_Sign_by_student_id(session, userid)
             if not user:
-                logger.error(f"用户 {userid} 不存在")
+                logger.warning(f"订阅用户 {userid} 不存在，跳过")
                 return
             username = user.User_Name
-            platform = await PlantformManager.get_Sign_by_student_id(db_session, user.Plantform)
-            url = platform.url
-            if_need_trans = int(platform.need_trans)
-            feed_url = f"{config.rsshub_host}{url}{userid}"
-            # 获取数据
-            data = await fetch_feed(feed_url)
-
-            if "error" in data:
-                logger.opt(exception=False).error(data["error"])
+            platform = await PlantformManager.get_Sign_by_student_id(session, user.Plantform)
+            if platform is None:
+                logger.warning(f"用户 {userid} 的平台不存在，跳过")
                 return
-
-            # RssHub可用性检查
-            if not data.get("entries"):
-                logger.error("该用户暂无动态或不存在,尝试使用备用地址")
-                try:
-                    URL = config.ut_url + f"?status=up&msg={platform.name}可能暂时不可用,尝试使用备用地址&ping="
-                    await self.report_status(URL)
-                except Exception as e:
-                    logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
-
-                if config.rsshub_host_back is not None:
-                    for rsshub_url in config.rsshub_host_back:
-                        feed_url_back = f"{rsshub_url}{url}{userid}"
-                        data = await fetch_feed(feed_url_back)
-                        if not data.get("entries"):
-                            logger.error(f"备用地址 {rsshub_url}该用户暂无动态或不存在")
-                            try:
-                                URL = config.ut_url + f"?status=up&msg={platform.name}备用地址{rsshub_url}可能暂时不可用&ping="
-                                await self.report_status(URL)
-                            except Exception as e:
-                                logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
-                            continue
-                        logger.success(f"成功从备用地址获取数据: {rsshub_url}")
-                    if not data.get("entries"):
-                        logger.error("所有备用地址均不可用或暂无动态")
-                        try:
-                            URL = config.ut_url + f"?status=up&msg={platform.name}所有备用地址均失效&ping="
-                            await self.report_status(URL)
-                        except Exception as e:
-                            logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
-                        return None
-                else:
-                    return
-
+            route, platform_name, need_trans = platform.url, platform.name, int(platform.need_trans)
+        data = await self._fetch_user_feed(userid, route, platform_name)
+        if data is None:
+            return
+        entries_info, seen = [], set()
+        for latest in data.get("entries", []):
             try:
-                URL = config.ut_url + f"?status=down&msg={platform.name}已恢复正常&ping="
-                await self.report_status(URL)
-            except Exception as e:
-                logger.opt(exception=False).error(f"发送状态检查时发生错误: {e}")
-
-            # 收集所有 entry 的 ID
-            entries_info = []
-            entry_count = min(3, len(data.entries))
-            for data_number in range(entry_count):
-                latest = data.entries[data_number]
                 trueid = await get_id(latest)
+            except (ValueError, TypeError, AttributeError) as exc:
+                logger.warning(f"跳过用户 {userid} 的无效 RSS 条目：{exc}")
+                continue
+            if trueid not in seen:
                 entries_info.append((latest, trueid))
-
-            # 批量查询所有 Detail
-            all_detail_ids = []
-            for _, trueid in entries_info:
-                for group_id in group_id_list:
-                    all_detail_ids.append(f"{trueid}-{group_id}")
-            existing_detail_ids = await DetailManager.get_existing_ids(db_session, all_detail_ids)
-
-            # 逐条处理 entry
-            for latest, trueid in entries_info:
-                logger.info(f"正在处理 {userid} | {username} 的推文 {trueid}")
-
-                if_is_self_trans = await if_self_trans(username, latest)
-                if_is_trans = await if_trans(latest)
-
-                # 只加载一次
-                content = None
-                content_loaded = False
-
-                # 检查 Content 缓存
-                existing_content = await ContentManager.get_Sign_by_student_id(db_session, trueid)
-
-                for group_id in group_id_list:
-                    id_with_group = f"{trueid}-{group_id}"
-                    if id_with_group in existing_detail_ids:
-                        logger.info(f"{id_with_group} 已发送")
-                        continue
-
-                    try:
-                        # 按需加载
-                        if not content_loaded:
-                            if existing_content:
-                                logger.info(f"该 {trueid} 推文本地已存在")
+                seen.add(trueid)
+        if not entries_info:
+            return
+        initialized_groups = []
+        for group in group_id_list:
+            try:
+                async with _delivery_lock(f"rss-group:{group}"), get_session() as session:
+                    await DetailManager.initialize_subscription(session, userid, group, entries_info)
+                initialized_groups.append(group)
+            except Exception as exc:
+                logger.error(f"初始化 {group} 对 {userid} 的订阅失败，将下次重试：{exc}")
+        group_id_list = initialized_groups
+        if not group_id_list:
+            return
+        async with get_session() as session:
+            existing_ids = await DetailManager.get_existing_ids(session, [
+                record_id for _, trueid in entries_info for group in group_id_list
+                for record_id in (f"{trueid}-{group}", DetailManager.skip_id(userid, group, trueid))
+            ])
+        for latest, trueid in entries_info:
+            content = None
+            is_self = await if_self_trans(username, latest)
+            is_forward = await if_trans(latest)
+            for group in group_id_list:
+                record_id = f"{trueid}-{group}"
+                skipped_id = DetailManager.skip_id(userid, group, trueid)
+                if record_id in existing_ids or skipped_id in existing_ids:
+                    continue
+                try:
+                    async with _delivery_lock(f"rss-group:{group}"):
+                        # 和初始化共用群锁，保护不同订阅返回相同 GUID 的基线及发送记录。
+                        async with get_session() as session:
+                            existing = await DetailManager.get_existing_ids(session, [record_id, skipped_id])
+                            if existing:
+                                existing_ids.update(existing)
+                                continue
+                        if content is None:
+                            try:
                                 content = await get_text(trueid)
-                            else:
-                                logger.info(f"该 {trueid} 推文本地不存在")
-                                content = await Format().extract_content(latest, if_need_trans)
-                                content["username"] = username
-                                content["id"] = trueid
+                            except (ValueError, SyntaxError, TypeError, AttributeError, SQLAlchemyError) as exc:
+                                logger.warning(f"文章缓存不可用，将从 RSS 重建：{type(exc).__name__}")
+                            if not content:
+                                translate = need_trans if any(
+                                    _parse_group_config((group_configs or {}).get(target))["if_need_translate"]
+                                    for target in group_id_list
+                                ) else 0
+                                content = await Format().extract_content(latest, translate)
+                                content.update(username=username, id=trueid)
                                 await update_text(content)
-                            content_loaded = True
-
-                        # 写入 Detail 记录
-                        await DetailManager.create_signmsg(
-                            db_session,
-                            id=id_with_group,
-                            summary=content['text'],
-                            updated=datetime.now(),
+                            content["username"] = username
+                        sent = await self.send_text(
+                            group, content, need_trans, is_self, is_forward,
+                            (group_configs or {}).get(group),
                         )
-                        logger.info(f"创建数据: {content.get('id')}")
-
-                        if config.if_first_time_start:
-                            logger.info("第一次启动，跳过发送")
-                        else:
-                            # 使用预加载的群组配置
-                            gc = group_configs.get(group_id) if group_configs else None
-                            await self.send_text(
-                                group_id=group_id,
-                                content=content,
-                                if_need_trans=if_need_trans,
-                                if_is_self_trans=if_is_self_trans,
-                                if_is_trans=if_is_trans,
-                                group_config=gc,
+                        processed_id = record_id if sent else skipped_id
+                        async with get_session() as session:
+                            await DetailManager.create_signmsg(
+                                session, id=processed_id, summary=content.get("text"),
+                                updated=datetime.now() if sent else None,
                             )
-                            # 发送完一条推文后随机等待1.5-3.5秒，避免过快发送导致风控
-                            delay = random.uniform(1.5, 3.5)
-                            await asyncio.sleep(delay)
-
-                    except Exception as e:
-                        logger.opt(exception=False).error(
-                            f"处理 {group_id} 对 {userid} 的推文 {trueid} 时发生错误: {e}")
-
-                    await asyncio.sleep(0.1)
+                        existing_ids.add(processed_id)
+                        if sent:
+                            await asyncio.sleep(random.uniform(1.5, 3.5))
+                except Exception as exc:
+                    # 每次记录使用独立会话；失败会回滚，不污染其他群的处理。
+                    logger.error(f"处理 {group} 对 {userid} 的文章 {trueid} 失败：{exc}")
+                await asyncio.sleep(0.1)
 
     async def change_config(self):
         config.if_first_time_start = False

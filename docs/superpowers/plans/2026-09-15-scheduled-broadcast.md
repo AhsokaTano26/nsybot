@@ -425,7 +425,11 @@ def _register_jobs() -> None:
             continue
         scheduler.add_job(
             send_broadcast,
-            CronTrigger(hour=",".join(map(str, message.hours)), minute=0),
+            CronTrigger(
+                hour=",".join(map(str, message.hours)),
+                minute=0,
+                timezone="Asia/Shanghai",
+            ),
             args=[key],
             id=f"broadcast:{key}",
             misfire_grace_time=60,

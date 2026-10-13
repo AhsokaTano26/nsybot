@@ -163,3 +163,4 @@ __pycache__/
 *.py[cod]
 *.class
 /CLAUDE.md
+/docs/superpowers/

@@ -1,10 +1,10 @@
 import asyncio
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 from apscheduler.triggers.cron import CronTrigger
-from bs4 import BeautifulSoup
-from nonebot import get_bot, get_driver, get_plugin_config, on_command, on_type, require
+from nonebot import get_bot, get_driver, on_command, on_type, require
 from nonebot.adapters.qq import (C2CMessageCreateEvent, Event,
                                  GroupAddRobotEvent, GroupDelRobotEvent,
                                  GroupMessageCreateEvent, Message,
@@ -18,10 +18,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from nsy.plugins.rssget.models import User
 
-from .config import Config
 from .encrypt import encrypt
 from .following_import import fetch_and_match
-from .functions import rss_get, fetch_feed
+from .functions import config, rss_get, fetch_feed
+from .format_json import Format
 from .get_id import get_id
 from .models import Detail
 from .models_method import (ContentManager, DetailManager, GroupconfigManager,
@@ -48,7 +48,6 @@ B = DeepSeek()  # 初始化DeepSeek翻译类
 # B = Ollama() # 初始化Ollama翻译类
 
 R = rss_get()  # 初始化rss类
-config = get_plugin_config(Config)
 logger.add("data/log/info_log.txt", level="INFO",rotation="5 MB", retention="10 days")
 logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 
@@ -263,7 +262,7 @@ async def User_name_get(id) -> User | None:
         return sheet1
 
 
-def is_current_time_in_period(start_time_str, end_time_str):
+def is_current_time_in_period(start_time_str, end_time_str, now=None):
     """
     判断当前时间是否在指定的时间段内
 
@@ -274,8 +273,9 @@ def is_current_time_in_period(start_time_str, end_time_str):
     Returns:
         bool: 当前时间是否在时间段内
     """
-    # 获取当前时间
-    now = datetime.now().time()
+    # 容器可能运行于 UTC，休息时间固定按北京时间判断。
+    shanghai = ZoneInfo("Asia/Shanghai")
+    now = (now or datetime.now(shanghai)).astimezone(shanghai).time()
 
     # 将字符串时间转换为time对象
     start_time = datetime.strptime(start_time_str, "%H:%M").time()
@@ -290,46 +290,8 @@ def is_current_time_in_period(start_time_str, end_time_str):
         return start_time <= now <= end_time
 
 async def extract_content(entry,if_need_trans) -> dict:
-    """提取推文内容结构化数据"""
-    publish_time = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
-    dt = datetime.strptime(publish_time, "%Y-%m-%d %H:%M")
-    # 增加指定小时
-    new_dt = dt + timedelta(hours=8)
-    # 格式化为字符串
-    published = new_dt.strftime("%Y-%m-%d %H:%M")
-
-    # 清理文本内容
-    clean_text = BeautifulSoup(entry.description, "html.parser").get_text("\n").strip()
-    if if_need_trans == 1:
-        trans_text1 = await B.main(BeautifulSoup(entry.description, "html.parser").get_text("\n"))  #为翻译段落划分
-        trans_text = trans_text1.replace("+", "\n")
-    else:
-        trans_text = None
-    # 提取图片（优先媒体内容）
-    images = []
-    for media in getattr(entry, "media_content", []):
-        if media.get("type", "").startswith("image/"):
-            images.append(media["url"])
-
-    # 如果媒体内容为空，尝试从附件获取
-    if not images:
-        for enc in getattr(entry, "enclosures", []):
-            if enc.get("type", "").startswith("image/"):
-                images.append(enc.href)
-
-    if hasattr(entry, 'description'):
-        soup = BeautifulSoup(entry.description, 'html.parser')
-        for img in soup.find_all('img', src=True):
-            images.append(img['src'])
-
-    return {
-        "title": entry.title,
-        "time": published,
-        "link": entry.link,
-        "text": clean_text,
-        "trans_text": trans_text,
-        "images": images
-    }
+    """命令查询与定时推送共用字段兼容和翻译降级逻辑。"""
+    return await Format().extract_content(entry, if_need_trans, translator=B)
 
 
 async def send_qq_image(img_url: str):
@@ -1362,7 +1324,16 @@ async def signal_on_():
     if_first_time_start = await rss_get().get_signal()
     await signal_on.finish(success(if_first_time_start, "📡 RSS 发送开关"))
 
+_refresh_lock = asyncio.Lock()
+
+
 async def refresh_article():
+    # 手动刷新与定时刷新共用锁，避免同一批文章被同时发送。
+    async with _refresh_lock:
+        await _refresh_article()
+
+
+async def _refresh_article():
     """
     定时刷新推送推文用函数
     """
@@ -1382,6 +1353,11 @@ async def refresh_article():
                         sub_list[username] = []
                     sub_list[username].append(group)
                 logger.success(f"{datetime.now()} 已获取所有订阅信息")
+
+                await DetailManager.bootstrap_legacy_subscriptions(db_session, [
+                    (user_id, group_id)
+                    for user_id, groups in sub_list.items() for group_id in groups
+                ], seed_first_install=config.if_first_time_start)
 
                 # 预加载所有群组配置
                 group_configs = await GroupconfigManager.get_all_configs(db_session)
