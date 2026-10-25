@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime, timedelta
+import random
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -10,26 +11,30 @@ from nonebot.adapters.qq import (C2CMessageCreateEvent, Event,
                                  GroupMessageCreateEvent, Message,
                                  MessageSegment)
 from nonebot.log import logger
+from nonebot.message import event_preprocessor
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 from nonebot_plugin_orm import get_session
+from sqlalchemy import delete
 from sqlalchemy.exc import SQLAlchemyError
 
 from nsy.plugins.rssget.models import User
 
 from .encrypt import encrypt
 from .following_import import fetch_and_match
-from .functions import config, rss_get, fetch_feed
+from .functions import config, rss_get, fetch_feed, _parse_group_config, _delivery_lock
 from .format_json import Format
 from .get_id import get_id
-from .models import Detail
+from .models import BotGroup, Detail, Groupconfig, Subscribe
+from .group_registry import BotGroupManager
 from .models_method import (ContentManager, DetailManager, GroupconfigManager,
                             PlantformManager, SubscribeManager, UserManager)
 from .platforms import PLATFORM_USAGES, execute_platform_command
 from .translation import Ali, BaiDu, DeepSeek, Ollama
 from .update_text import get_text, update_text
-from nsy.qq_utils import (article_card, command_keyboard, download_image,
+from nsy import qq_utils
+from nsy.qq_utils import (article_messages, command_keyboard, download_image,
                           error, file_image, group_openid, info, is_c2c_event,
                           is_group_event, markdown, quoted_card,
                           send_group_message, success, user_openid, warning)
@@ -52,6 +57,49 @@ logger.add("data/log/info_log.txt", level="INFO",rotation="5 MB", retention="10 
 logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
+
+# 当前进程已收到的退群事件，防止延迟到达的旧消息重新登记已离开的群。
+_departed_groups: dict[str, datetime] = {}
+
+
+def _registry_event_time(value) -> datetime:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            value = None
+    if not isinstance(value, datetime):
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _registry_display_time(value: datetime | None) -> str:
+    if value is None:
+        return "未知"
+    value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return value.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+
+
+@event_preprocessor
+async def track_group_message(event: Event) -> None:
+    """所有普通/@群消息都登记，不依赖 RSS 指令、订阅或忽略名单。"""
+    if not isinstance(event, GroupMessageCreateEvent):
+        return
+    group_id = str(event.group_openid)
+    seen_at = _registry_event_time(event.timestamp)
+    async with _delivery_lock(f"membership:{group_id}"):
+        departed_at = _departed_groups.get(group_id)
+        if departed_at and seen_at.replace(microsecond=0) <= departed_at.replace(microsecond=0):
+            return
+        try:
+            async with get_session() as session, session.begin():
+                await BotGroupManager.observe(session, group_id, seen_at)
+            # 消息只能证明重新在群，不能清除用于隔离上一次成员关系的时间界限。
+        except SQLAlchemyError as exc:
+            logger.opt(exception=False).error(f"登记群 {group_id} 的消息事件失败，不阻断命令：{exc}")
+
 
 async def ignore_group(event: Event) -> bool:
     """检查是否在忽略的群中"""
@@ -239,17 +287,9 @@ async def _apply_picker_selection(
 
 
 async def _get_joined_group_ids() -> set[str]:
-    """返回事件驱动维护的官方群集合。
-
-    稳定版官方 NoneBot 适配器没有 OneBot ``get_group_list`` 的等价接口。
-    ``GROUP_DEL_ROBOT`` 会在机器人被移出群时立即删除订阅；因此现有订阅均
-    视为仍有效，手动清理命令不会因临时网络失败而误删数据。
-    """
+    """读取独立群登记表，包含历史待确认群，与是否存在 RSS 订阅无关。"""
     async with get_session() as db_session:
-        return {
-            str(item.group)
-            for item in await SubscribeManager.get_all_subscriptions(db_session)
-        }
+        return await BotGroupManager.ids(db_session)
 
 async def User_get() -> set:
     async with (get_session() as db_session):
@@ -294,22 +334,38 @@ async def extract_content(entry,if_need_trans) -> dict:
     return await Format().extract_content(entry, if_need_trans, translator=B)
 
 
-async def send_qq_image(img_url: str):
+async def _send_rss_reply(group_id: str, message):
+    """保留命令的被动回复上下文，同时遵守共用的机器人/群发送间隔。"""
+    bot = get_bot()
+    async with qq_utils.active_message_limiter.turn(str(getattr(bot, "self_id", id(bot))), group_id):
+        return await rss_cmd.send(message)
+
+
+async def _send_rss_article(group_id: str, content: dict, translation: str | None):
+    """手动查询与自动推送共用文章锁，正文分页和原图不会相互插入。"""
+    async with _delivery_lock(f"rss-group:{group_id}"):
+        for message in article_messages(content, translation, config.model_name if translation else None):
+            await _send_rss_reply(group_id, message)
+        for url in dict.fromkeys(content.get("images") or []):
+            await send_qq_image(url, group_id)
+
+
+async def send_qq_image(img_url: str, group_id: str):
     """在命令回复中发送 QQ 官方富媒体图片。"""
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             data, file_name = await download_image(img_url, client)
-        await rss_cmd.send(file_image(data, file_name))
+        await _send_rss_reply(group_id, file_image(data, file_name))
 
     except httpx.HTTPError as e:
         logger.opt(exception=False).error(f"图片下载失败: {str(e)}")
-        await rss_cmd.send(error(f"图片下载失败：{e}", "🖼️ 图片发送失败"))
+        await _send_rss_reply(group_id, error(f"图片下载失败：{e}", "🖼️ 图片发送失败"))
     except httpx.TimeoutException as e:
         logger.opt(exception=False).error(f"连接超时|图片下载失败: {str(e)}")
-        await rss_cmd.send(error(f"连接超时：{e}", "🖼️ 图片发送失败"))
+        await _send_rss_reply(group_id, error(f"连接超时：{e}", "🖼️ 图片发送失败"))
     except Exception as e:
         logger.opt(exception=False).error(f"意外错误|图片发送失败: {str(e)}")
-        await rss_cmd.send(error(f"意外错误：{e}", "🖼️ 图片发送失败"))
+        await _send_rss_reply(group_id, error(f"意外错误：{e}", "🖼️ 图片发送失败"))
 
 
 
@@ -376,18 +432,7 @@ async def handle_rss_cmd(event: GroupMessageCreateEvent,args: Message = CommandA
                         translation = None
                         if if_need_trans == 1:
                             translation = content.get("trans_text") or "（暂无翻译）"
-                        await rss_cmd.send(article_card(
-                            content, translation, config.model_name if translation else None
-                        ))
-
-                        # 发送图片（单独处理）
-                        if int(content["image_num"]) != 0:
-                            await rss_cmd.send(info(
-                                f"共 {int(content['image_num'])} 张，正在逐张发送。",
-                                "🖼️ 图片附件",
-                            ))
-                            for index, img_url in enumerate(content["images"], 1):
-                                await send_qq_image(img_url)
+                        await _send_rss_article(group_openid(event), content, translation)
                     else:   #从RSSHUB获取信息
                         logger.info(f"该 {trueid} 推文不存在")
                         content = await extract_content(latest,if_need_trans)
@@ -398,18 +443,7 @@ async def handle_rss_cmd(event: GroupMessageCreateEvent,args: Message = CommandA
                         translation = None
                         if if_need_trans == 1:
                             translation = content.get("trans_text") or "（暂无翻译）"
-                        await rss_cmd.send(article_card(
-                            content, translation, config.model_name if translation else None
-                        ))
-
-                        # 发送图片（单独处理）
-                        if content["images"]:
-                            await rss_cmd.send(info(
-                                f"共 {len(content['images'])} 张，正在逐张发送。",
-                                "🖼️ 图片附件",
-                            ))
-                            for index, img_url in enumerate(content["images"], 1):
-                                await send_qq_image(img_url)
+                        await _send_rss_article(group_openid(event), content, translation)
             except Exception as e:
                 logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
@@ -1125,71 +1159,84 @@ async def handle_list_article(event: GroupMessageCreateEvent,args: Message = Com
 
             await list_article.finish(quoted_card(f"🐦 @{username} 的动态列表", "\n".join(entries)))
 
+def _group_settings_text(group_id: str, group_settings=None) -> str:
+    settings = _parse_group_config(group_settings)
+    status = lambda value: "开" if value else "关"
+    limit = settings["push_limit"]
+    amount = "全部未发送（0）" if limit == 0 else f"最近 {limit} 篇"
+    return (
+        f"群 OpenID：`{group_id}`\n"
+        f"转发：{status(settings['if_need_trans'])} · "
+        f"自转发：{status(settings['if_need_self_trans'])} · "
+        f"翻译：{status(settings['if_need_translate'])}\n"
+        f"推送数量：**{amount}**（每个账号、每轮）\n\n"
+        "`群组配置 推送数量 1`\n"
+        "`群组配置 转发 开` · `群组配置 自转发 关` · `群组配置 翻译 开`\n"
+        "数量可设 1–5，0 为全部；窗口外的旧文章静默登记。"
+    )
+
+
 group_config = on_command("群组配置", priority=10, rule=group_rule)
 @group_config.handle()
 async def group_config_(event: GroupMessageCreateEvent, args: Message = CommandArg()):
     command = args.extract_plain_text().strip()
     group_id = group_openid(event)
-    try:
-        parts = _split_args(command)
-        if not parts:
-            parts = ["1", "0", "1", "1"]
-        if len(parts) != 4:
+    parts = _split_args(command)
+    fields = {
+        "推送数量": "push_limit", "转发": "if_need_trans",
+        "自转发": "if_need_self_trans", "自我转发": "if_need_self_trans",
+        "翻译": "if_need_translate",
+    }
+    changes = {}
+    if len(parts) == 2 and parts[0] in fields:
+        field = fields[parts[0]]
+        if field == "push_limit":
+            value = _parse_int(parts[1])
+            if value is None or not 0 <= value <= 5:
+                await group_config.finish(error("推送数量必须是 0–5 的整数；0 表示全部未发送。", "⚙️ 群组配置"))
+        else:
+            value = {"开": True, "关": False, "1": True, "0": False}.get(parts[1])
+            if value is None:
+                await group_config.finish(error("开关请填写「开」「关」或 1、0。", "⚙️ 群组配置"))
+        changes[field] = value
+    elif parts:
+        values = [_parse_int(item) for item in parts]
+        if len(values) not in (3, 4) or any(value not in (0, 1) for value in values):
             await group_config.finish(info(
-                "`群组配置 <转发> <自我转发> <翻译> <图片提示>`\n\n"
-                "每项填写 `1`（开）或 `0`（关），顺序如下：\n"
-                "1. 转发：博主转发他人的动态是否推送\n"
-                "2. 自我转发：博主转发自己的动态是否推送\n"
-                "3. 翻译：推送时是否附带中文翻译\n"
-                "4. 图片提示：发送图片前是否提示图片数量\n\n"
-                "推荐：`群组配置 1 0 1 1`",
+                "发送 `群组配置` 查看设置；按名称修改，例如：\n"
+                "`群组配置 推送数量 1`\n"
+                "`群组配置 转发 开`\n"
+                "`群组配置 自转发 关`\n"
+                "`群组配置 翻译 开`",
                 "⚙️ 群组配置用法",
             ))
-
-        values = [_parse_int(item) for item in parts]
-        if any(item is None or item not in (0, 1) for item in values):
-            await group_config.finish(error("四个参数只能填写 `0` 或 `1`。", "⚙️ 群组配置"))
-
-        if_need_trans = True if values[0] == 1 else False
-        if_need_self_trans = True if values[1] == 1 else False
-        if_need_translate = True if values[2] == 1 else False
-        if_need_photo_num_mention = True if values[3] == 1 else False
-
-        config_values = dict(
-            if_need_trans=if_need_trans,
-            if_need_self_trans=if_need_self_trans,
-            if_need_translate=if_need_translate,
-            if_need_photo_num_mention=if_need_photo_num_mention,
+        changes.update(
+            if_need_trans=bool(values[0]), if_need_self_trans=bool(values[1]),
+            if_need_translate=bool(values[2]), if_need_photo_num_mention=False,
         )
 
-        async with (get_session() as db_session):
-            config_msg = await GroupconfigManager.get_Sign_by_group_id(db_session, group_id)
-            if not config_msg:
-                try:
-                    await GroupconfigManager.create_signmsg(
-                        db_session,
-                        group_id=group_id,
-                        if_need_merged_message=True,
-                        **config_values,
+    try:
+        async with get_session() as session:
+            current = await GroupconfigManager.get_Sign_by_group_id(session, group_id)
+            if changes:
+                if current is None:
+                    defaults = dict(
+                        group_id=group_id, if_need_trans=True, if_need_self_trans=False,
+                        if_need_translate=True, if_need_photo_num_mention=False,
+                        if_need_merged_message=True, push_limit=1,
                     )
-                    await group_config.finish(success(
-                        f"群 OpenID：`{group_id}`", "⚙️ 群组配置已创建"
-                    ))
-                except SQLAlchemyError as e:
-                    logger.opt(exception=False).error(f"数据库操作错误: {e}")
-                    await group_config.finish(error("创建配置失败，请稍后重试。", "⚙️ 群组配置"))
-            else:
-                try:
-                    await GroupconfigManager.update_config(db_session, group_id, **config_values)
-                    await group_config.finish(success(
-                        f"群 OpenID：`{group_id}`", "⚙️ 群组配置已更新"
-                    ))
-                except SQLAlchemyError as e:
-                    logger.opt(exception=False).error(f"数据库操作错误: {e}")
-                    await group_config.finish(error("更新配置失败，请稍后重试。", "⚙️ 群组配置"))
-
-    except IndexError:
-        await group_config.finish(warning("请输入正确的配置参数。", "⚙️ 群组配置"))
+                    defaults.update(changes)
+                    current = await GroupconfigManager.create_signmsg(session, **defaults)
+                else:
+                    await GroupconfigManager.update_config(session, group_id, **changes)
+                await session.refresh(current)
+            text = _group_settings_text(group_id, current)
+            if changes:
+                text += "\n\n修改将在下一轮刷新时生效。"
+        await group_config.finish(info(text, "⚙️ 群组配置已更新" if changes else "⚙️ 当前群组配置"))
+    except SQLAlchemyError as exc:
+        logger.opt(exception=False).error(f"群组配置读写失败：{exc}")
+        await group_config.finish(error("配置读写失败，请稍后重试。", "⚙️ 群组配置"))
 
 
 view_config = on_command("查看配置", priority=10, rule=group_rule)
@@ -1199,20 +1246,7 @@ async def handle_view_config(event: GroupMessageCreateEvent):
     group_id = group_openid(event)
     async with (get_session() as db_session):
         config_msg = await GroupconfigManager.get_Sign_by_group_id(db_session, group_id)
-        if not config_msg:
-            await view_config.finish(info(
-                f"群 `{group_id}` 尚未单独配置，当前使用默认值。", "⚙️ 群组配置"
-            ))
-
-        status = lambda v: "✅ 开" if v else "❌ 关"
-        msg = (
-            f"群 OpenID：`{group_id}`\n\n"
-            f"- 转发推文：{status(config_msg.if_need_trans)}\n"
-            f"- 自我转发：{status(config_msg.if_need_self_trans)}\n"
-            f"- 中文翻译：{status(config_msg.if_need_translate)}\n"
-            f"- 图片提示：{status(config_msg.if_need_photo_num_mention)}"
-        )
-        await view_config.finish(info(msg, "⚙️ 当前群组配置"))
+        await view_config.finish(info(_group_settings_text(group_id, config_msg), "⚙️ 当前群组配置"))
 
 
 help = on_command("/help", aliases={"/帮助","help","帮助"}, priority=10, rule=group_rule)
@@ -1231,7 +1265,8 @@ async def handle_help(event: GroupMessageCreateEvent):
                 ("退订面板", "取消订阅", True),
             ],
             [("📋 本群订阅", "查询 群组", True), ("⚙️ 查看配置", "查看配置", True)],
-            [("配置·填参", "群组配置 <转发1/0> <自我转发1/0> <翻译1/0> <图片提示1/0>", False)],
+            [("⚙️ 群组配置", "群组配置", True), ("推送数量·填参", "群组配置 推送数量 <0-5>", False)],
+            [("转发·填参", "群组配置 转发 <开/关>", False), ("翻译·填参", "群组配置 翻译 <开/关>", False)],
         ]
     )
     await help.send(markdown(
@@ -1259,13 +1294,14 @@ async def handle_help(event: GroupMessageCreateEvent):
             ],
             [
                 ("📊 订阅统计", "订阅统计", True),
+                ("👥 群列表", "群列表", True),
                 ("📈 发送统计", "发送统计", True),
                 ("🔄 刷新推送", "refresh", True),
             ],
             [
                 ("群发·填参", "/发送 <内容>", False),
-                ("📡 查看开关", "/信号", True),
-                ("✅ 启用推送", "/信号否", True),
+                ("📡 首轮状态", "/信号", True),
+                ("跳过首轮检查", "/信号否", True),
             ],
             [
                 ("平台列表", "平台列表", True),
@@ -1315,14 +1351,23 @@ signal = on_command("/信号", priority=10, rule=superuser_group_rule)
 @signal.handle()
 async def signal_():
     if_first_time_start = await rss_get().get_signal()
-    await signal.finish(info(if_first_time_start, "📡 RSS 发送开关"))
+    await signal.finish(info(
+        f"首次运行标识：`{if_first_time_start}`\n\n"
+        "启动首轮按群检查：上次成功推送超过 20 分钟或无成功记录时，只登记历史文章。"
+        "首轮完成后自动关闭检查。",
+        "📡 RSS 首轮检查",
+    ))
 
 signal_on = on_command("/信号否", priority=10, rule=superuser_group_rule)
 @signal_on.handle()
 async def signal_on_():
     await rss_get().change_config()
     if_first_time_start = await rss_get().get_signal()
-    await signal_on.finish(success(if_first_time_start, "📡 RSS 发送开关"))
+    await signal_on.finish(success(
+        f"首次运行标识：`{if_first_time_start}`\n\n"
+        "已关闭本次启动的首轮时间检查；已经登记的历史文章不会补发。",
+        "📡 RSS 首轮检查",
+    ))
 
 _refresh_lock = asyncio.Lock()
 
@@ -1354,28 +1399,35 @@ async def _refresh_article():
                     sub_list[username].append(group)
                 logger.success(f"{datetime.now()} 已获取所有订阅信息")
 
+                silent_groups = set()
+                if config.if_first_time_start:
+                    cutoff = datetime.now() - timedelta(minutes=20)
+                    for group_id in {group for groups in sub_list.values() for group in groups}:
+                        last_sent = await DetailManager.last_successful_delivery_at(db_session, group_id)
+                        if last_sent is None or last_sent < cutoff:
+                            silent_groups.add(group_id)
+                        action = "静默登记历史文章" if group_id in silent_groups else "正常推送"
+                        logger.info(f"启动首轮：群 {group_id} 上次成功推送 {last_sent or '无记录'}，{action}")
+
                 await DetailManager.bootstrap_legacy_subscriptions(db_session, [
                     (user_id, group_id)
                     for user_id, groups in sub_list.items() for group_id in groups
-                ], seed_first_install=config.if_first_time_start)
+                ], silent_groups=silent_groups)
 
                 # 预加载所有群组配置
                 group_configs = await GroupconfigManager.get_all_configs(db_session)
                 logger.info(f"已预加载 {len(group_configs)} 个群组配置")
 
-                semaphore = asyncio.Semaphore(5)  # 控制rsshub请求并发数
-
-                async def process_user(user, groups):
-                    async with semaphore:
-                        try:
-                            logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
-                            await R.handle_rss(userid=user, group_id_list=groups, group_configs=group_configs)
-                            await asyncio.sleep(0.5)
-                        except Exception as e:
-                            logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {e}")
-
-                tasks = [process_user(user, sub_list[user]) for user in sub_list]
-                await asyncio.gather(*tasks)
+                accounts = list(sub_list.items())
+                for index, (user, groups) in enumerate(accounts):
+                    try:
+                        logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
+                        # 同一账号的目标群在 handle_rss 内并行，账号之间顺序处理。
+                        await R.handle_rss(userid=user, group_id_list=groups, group_configs=group_configs)
+                    except Exception as exc:
+                        logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {exc}")
+                    if index < len(accounts) - 1:
+                        await asyncio.sleep(random.uniform(5, 15))
 
             await rss_get().change_config()
             logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
@@ -1429,46 +1481,56 @@ async def handle_tweet_stats():
         ))
 
 
+joined_groups_cmd = on_command("群列表", aliases={"已加入群"}, priority=10, block=True, rule=Rule(is_superuser))
+
+
+@joined_groups_cmd.handle()
+async def handle_joined_groups(args: Message = CommandArg()):
+    parts = _split_args(args.extract_plain_text())
+    page = _parse_int(parts[0]) if parts else 1
+    if len(parts) > 1 or page is None or page < 1:
+        await joined_groups_cmd.finish(error("用法：`群列表 [页码]`，页码从 1 开始。", "👥 群登记表"))
+    async with get_session() as session:
+        total, rows = await BotGroupManager.page(session, page=page, page_size=10)
+        pages = max(1, (total + 9) // 10)
+        if page > pages:
+            await joined_groups_cmd.finish(error(f"当前共 {pages} 页。", "👥 群登记表"))
+        sources = {"join": "入群事件确认", "message": "群消息确认", "history": "历史补录，待确认"}
+        lines = [
+            f"`{row.group_openid}`\n"
+            f"入群：{_registry_display_time(row.joined_at)} · {sources.get(row.source, row.source)}"
+            for row in rows
+        ]
+    await joined_groups_cmd.finish(quoted_card(
+        f"👥 群登记表 · {total} 群 · 第 {page}/{pages} 页",
+        "\n\n".join(lines) or "暂无群登记记录。",
+        "时间为北京时间。历史待确认记录不代表已重新核实在群；真实入群时间未知时留空。\n"
+        "翻页：`群列表 <页码>`",
+    ))
+
+
 async def _cleanup_orphan_subscriptions() -> str:
-    """清理失效群订阅，返回详细报告"""
+    """报告订阅与群登记差异；仅退群事件可作为自动删除依据。"""
     async with get_session() as db_session:
         joined_group_ids = await _get_joined_group_ids()
         all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
         subscribed_group_ids = {str(sub.group) for sub in all_subscriptions}
 
-        orphan_group_ids = sorted(subscribed_group_ids - joined_group_ids)
-
-        # 按群组收集被删除的订阅详情
-        orphan_details: dict[str, list[str]] = {}
-        for sub in all_subscriptions:
-            if str(sub.group) in orphan_group_ids:
-                orphan_details.setdefault(str(sub.group), []).append(sub.username)
-
-        if not orphan_group_ids:
+        untracked_group_ids = sorted(subscribed_group_ids - joined_group_ids)
+        if not untracked_group_ids:
             return (
-                f"✅ 无失效群订阅\n"
-                f"已加入群聊数: {len(joined_group_ids)}\n"
-                f"订阅群组数: {len(subscribed_group_ids)}"
+                "✅ 订阅群均已有登记\n"
+                f"登记群聊数: {len(joined_group_ids)}\n"
+                f"订阅群组数: {len(subscribed_group_ids)}\n"
+                "已收到退群事件的群会实时清理订阅和配置。"
             )
-
-        deleted_count = 0
-        for group_id in orphan_group_ids:
-            deleted_count += await SubscribeManager.delete_by_group(db_session, group_id)
-
-        # 构建详细报告
-        msg_parts = [
-            f"✅ 清理完成\n",
-            f"已加入群聊数: {len(joined_group_ids)}\n",
-            f"订阅群组数: {len(subscribed_group_ids)}\n",
-            f"清理失效群数: {len(orphan_group_ids)}\n",
-            f"删除订阅条数: {deleted_count}\n\n",
-            f"📋 详细清单:\n",
-        ]
-        for group_id in orphan_group_ids:
-            users = orphan_details.get(group_id, [])
-            msg_parts.append(f"群 {group_id} ({len(users)}条): {', '.join(users)}\n")
-
-        return "".join(msg_parts)
+        return (
+            f"登记群聊数: {len(joined_group_ids)}\n"
+            f"订阅群组数: {len(subscribed_group_ids)}\n"
+            f"未登记的订阅群: {len(untracked_group_ids)}\n\n"
+            + "\n".join(untracked_group_ids)
+            + "\n\n缺少退群证据，已保留这些订阅；收到群消息时会自动补登记。"
+        )
 
 
 cleanup_orphan_subscriptions = on_command(
@@ -1567,11 +1629,25 @@ group_removed = on_type(GroupDelRobotEvent, priority=10, block=False)
 
 @group_removed.handle()
 async def handle_group_removed(event: GroupDelRobotEvent):
-    """机器人被官方群时，立即清理该群全部订阅和群配置。"""
+    """退群时原子删除登记、RSS 订阅和群配置。"""
     group_id = str(event.group_openid)
-    async with get_session() as db_session:
-        deleted = await SubscribeManager.delete_by_group(db_session, group_id)
-        await GroupconfigManager.delete_id(db_session, group_id)
+    left_at = _registry_event_time(event.timestamp)
+    async with _delivery_lock(f"membership:{group_id}"):
+        async with get_session() as session, session.begin():
+            current = await session.get(BotGroup, group_id)
+            evidence = [stamp for stamp in (
+                current.joined_at if current else None, current.last_seen_at if current else None,
+            ) if stamp is not None]
+            # QQ 入群/退群时间可能仅精确到秒；同一秒内按收到的事件顺序处理。
+            if any(stamp.replace(microsecond=0) > left_at.replace(microsecond=0) for stamp in evidence):
+                logger.info(f"忽略群 {group_id} 早于最新在群证据的退群事件")
+                return
+            await BotGroupManager.remove(session, group_id)
+            result = await session.execute(delete(Subscribe).where(Subscribe.group == group_id))
+            deleted = result.rowcount
+            await session.execute(delete(Groupconfig).where(Groupconfig.group_id == group_id))
+        previous = _departed_groups.get(group_id)
+        _departed_groups[group_id] = max(left_at, previous) if previous else left_at
     logger.info(f"机器人已被移出群 {group_id}，删除 {deleted} 条订阅")
     if config.target_group_openid:
         await send_group_message(
@@ -1589,12 +1665,22 @@ group_added = on_type(GroupAddRobotEvent, priority=10, block=False)
 
 @group_added.handle()
 async def handle_group_added(event: GroupAddRobotEvent):
+    group_id = str(event.group_openid)
+    joined_at = _registry_event_time(event.timestamp)
+    async with _delivery_lock(f"membership:{group_id}"):
+        departed_at = _departed_groups.get(group_id)
+        if departed_at and joined_at.replace(microsecond=0) < departed_at.replace(microsecond=0):
+            return
+        async with get_session() as session, session.begin():
+            await BotGroupManager.record_join(session, group_id, joined_at)
+        _departed_groups.pop(group_id, None)
     logger.info(f"机器人已加入群 {event.group_openid}")
     if config.target_group_openid:
         await send_group_message(
             get_bot(),
             config.target_group_openid,
             success(
-                f"群 OpenID：`{event.group_openid}`", "🤖 机器人已加入新群"
+                f"群 OpenID：`{event.group_openid}`\n入群时间：{_registry_display_time(joined_at)}（北京时间）",
+                "🤖 机器人已加入新群",
             ),
         )

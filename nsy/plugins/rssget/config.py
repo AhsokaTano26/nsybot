@@ -7,6 +7,7 @@ class Config(BaseModel):
     # QQ 官方 Bot 不暴露 QQ 群号；这里及数据库中均使用 group_openid。
     ignored_group_openids: list[str] = []
     broadcast_ban_openids: list[str] = []
+    # 启动首轮按群检查上次成功推送时间；首轮完成或执行 /信号否 后置为 False。
     if_first_time_start: bool = True
     target_group_openid: str | None = None
 
@@ -32,5 +33,5 @@ class Config(BaseModel):
 
 > 点击“订阅面板”或“退订面板”可按编号批量选择；也可直接发送 `订阅 <用户ID>`。
 > `rss` 与 `文章列表` 需要用户 ID，按钮会预填命令供你补充。
-> 群组配置的参数顺序为：转发、自我转发、翻译、图片提示；`1` 为开、`0` 为关。
-> 推荐配置：`群组配置 1 0 1 1`。"""
+> 发送 `群组配置` 查看全部设置；使用 `群组配置 翻译 开` 等命令单独修改。
+> 默认每个账号每轮只推送最近 1 篇；`群组配置 推送数量 0` 表示全部未发送，1–5 表示最近篇数。"""

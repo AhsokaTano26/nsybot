@@ -16,7 +16,7 @@ from .get_id import get_id
 from .models_method import DetailManager, PlantformManager, UserManager
 from .trans_msg import if_self_trans, if_trans
 from .update_text import get_text, update_text
-from nsy.qq_utils import article_card, download_image, error, file_image, info, send_group_message
+from nsy.qq_utils import article_messages, download_image, error, file_image, send_group_message
 
 config = get_plugin_config(Config)
 
@@ -61,7 +61,7 @@ _DEFAULT_GROUP_CONFIG = {
     "if_need_trans": True,
     "if_need_self_trans": False,
     "if_need_translate": True,
-    "if_need_photo_num_mention": True,
+    "push_limit": 1,
 }
 
 
@@ -72,7 +72,7 @@ def _parse_group_config(group_config) -> dict:
             "if_need_trans": group_config.if_need_trans,
             "if_need_self_trans": group_config.if_need_self_trans,
             "if_need_translate": group_config.if_need_translate,
-            "if_need_photo_num_mention": group_config.if_need_photo_num_mention,
+            "push_limit": 1 if group_config.push_limit is None else group_config.push_limit,
         }
     return _DEFAULT_GROUP_CONFIG
 
@@ -158,7 +158,6 @@ class rss_get():
         if_need_user_trans = gc["if_need_trans"]
         if_need_self_trans = gc["if_need_self_trans"]
         if_need_translate = gc["if_need_translate"]
-        if_need_photo_num_mention = gc["if_need_photo_num_mention"]
 
         if if_is_self_trans:
             allowed = if_need_self_trans
@@ -176,7 +175,6 @@ class rss_get():
                     group_id=group_id,
                     content=content,
                     translation=translation,
-                    if_need_photo_num_mention=if_need_photo_num_mention,
                 )
             return True
         return False
@@ -184,26 +182,16 @@ class rss_get():
     @staticmethod
     async def handle_markdown_send(
         group_id: str, content: dict, translation: str | None = None,
-        if_need_photo_num_mention: bool = True,
     ):
         """正文发送失败由调用方重试；附件失败降级为带警告的正文成功。"""
         bot = get_bot()
         try:
-            await send_group_message(
-                bot, group_id,
-                article_card(content, translation, config.model_name if translation else None),
-            )
+            for message in article_messages(content, translation, config.model_name if translation else None):
+                await send_group_message(bot, group_id, message)
         except Exception as exc:
             logger.error(f"发送群 {group_id} RSS 正文失败：{exc}")
             raise
         images = list(dict.fromkeys(content.get("images") or []))
-        if images and if_need_photo_num_mention:
-            try:
-                await send_group_message(bot, group_id, info(
-                    f"共 {len(images)} 张，正在逐张发送。", "🖼️ 图片附件",
-                ))
-            except Exception as exc:
-                logger.warning(f"图片数量提示未发送，继续发送附件：{type(exc).__name__}")
         failures = 0
         for url in images:
             if not await rss_get().send_qq_image(url, group_id):
@@ -261,70 +249,86 @@ class rss_get():
                 seen.add(trueid)
         if not entries_info:
             return
-        initialized_groups = []
-        for group in group_id_list:
+        groups = list(dict.fromkeys(map(str, group_id_list)))
+        configs = group_configs or {}
+        flags = {
+            trueid: (await if_self_trans(username, entry), await if_trans(entry))
+            for entry, trueid in entries_info
+        }
+        content_tasks = {}
+
+        async def load_content(entry, trueid):
+            try:
+                content = await get_text(trueid)
+            except (ValueError, SyntaxError, TypeError, AttributeError, SQLAlchemyError) as exc:
+                logger.warning(f"文章缓存不可用，将从 RSS 重建：{type(exc).__name__}")
+                content = None
+            if not content:
+                translate = need_trans if any(
+                    _parse_group_config(configs.get(target))["if_need_translate"] for target in groups
+                ) else 0
+                content = await Format().extract_content(entry, translate)
+                content.update(username=username, id=trueid)
+                await update_text(content)
+            content["username"] = username
+            return content
+
+        async def content_for(entry, trueid):
+            # 同一账号并行投递多群时，共用一份缓存读取/正文提取/翻译任务。
+            if trueid not in content_tasks:
+                content_tasks[trueid] = asyncio.create_task(load_content(entry, trueid))
+            return await content_tasks[trueid]
+
+        async def deliver_group(group):
+            gc = _parse_group_config(configs.get(group))
+            limit = gc["push_limit"]
             try:
                 async with _delivery_lock(f"rss-group:{group}"), get_session() as session:
-                    await DetailManager.initialize_subscription(session, userid, group, entries_info)
-                initialized_groups.append(group)
+                    await DetailManager.initialize_subscription(
+                        session, userid, group, entries_info, push_limit=limit,
+                    )
             except Exception as exc:
                 logger.error(f"初始化 {group} 对 {userid} 的订阅失败，将下次重试：{exc}")
-        group_id_list = initialized_groups
-        if not group_id_list:
-            return
-        async with get_session() as session:
-            existing_ids = await DetailManager.get_existing_ids(session, [
-                record_id for _, trueid in entries_info for group in group_id_list
-                for record_id in (f"{trueid}-{group}", DetailManager.skip_id(userid, group, trueid))
-            ])
-        for latest, trueid in entries_info:
-            content = None
-            is_self = await if_self_trans(username, latest)
-            is_forward = await if_trans(latest)
-            for group in group_id_list:
+                return
+
+            selected = entries_info[:limit] if limit else entries_info
+            started_previous = False
+            for entry, trueid in selected:
                 record_id = f"{trueid}-{group}"
                 skipped_id = DetailManager.skip_id(userid, group, trueid)
-                if record_id in existing_ids or skipped_id in existing_ids:
-                    continue
                 try:
+                    # 一篇的全部正文页和原图共用群锁，其他文章不能插入其中。
                     async with _delivery_lock(f"rss-group:{group}"):
-                        # 和初始化共用群锁，保护不同订阅返回相同 GUID 的基线及发送记录。
                         async with get_session() as session:
-                            existing = await DetailManager.get_existing_ids(session, [record_id, skipped_id])
-                            if existing:
-                                existing_ids.update(existing)
+                            if await DetailManager.get_existing_ids(session, [record_id, skipped_id]):
                                 continue
-                        if content is None:
-                            try:
-                                content = await get_text(trueid)
-                            except (ValueError, SyntaxError, TypeError, AttributeError, SQLAlchemyError) as exc:
-                                logger.warning(f"文章缓存不可用，将从 RSS 重建：{type(exc).__name__}")
-                            if not content:
-                                translate = need_trans if any(
-                                    _parse_group_config((group_configs or {}).get(target))["if_need_translate"]
-                                    for target in group_id_list
-                                ) else 0
-                                content = await Format().extract_content(latest, translate)
-                                content.update(username=username, id=trueid)
-                                await update_text(content)
-                            content["username"] = username
-                        sent = await self.send_text(
-                            group, content, need_trans, is_self, is_forward,
-                            (group_configs or {}).get(group),
+                        is_self, is_forward = flags[trueid]
+                        allowed = gc["if_need_self_trans"] if is_self else (
+                            gc["if_need_trans"] if is_forward else True
                         )
-                        processed_id = record_id if sent else skipped_id
+                        if not allowed:
+                            async with get_session() as session:
+                                await DetailManager.create_signmsg(
+                                    session, id=skipped_id, summary=entry.get("title"), updated=None,
+                                )
+                            continue
+                        content = await content_for(entry, trueid)
+                        if started_previous:
+                            await asyncio.sleep(random.uniform(5, 15))
+                        # 已开始发出的文章即使后续页或去重写入失败，也需要篇间等待。
+                        started_previous = True
+                        sent = await self.send_text(
+                            group, content, need_trans, is_self, is_forward, configs.get(group),
+                        )
                         async with get_session() as session:
                             await DetailManager.create_signmsg(
-                                session, id=processed_id, summary=content.get("text"),
-                                updated=datetime.now() if sent else None,
+                                session, id=record_id if sent else skipped_id,
+                                summary=content.get("text"), updated=datetime.now() if sent else None,
                             )
-                        existing_ids.add(processed_id)
-                        if sent:
-                            await asyncio.sleep(random.uniform(1.5, 3.5))
                 except Exception as exc:
-                    # 每次记录使用独立会话；失败会回滚，不污染其他群的处理。
                     logger.error(f"处理 {group} 对 {userid} 的文章 {trueid} 失败：{exc}")
-                await asyncio.sleep(0.1)
+
+        await asyncio.gather(*(deliver_group(group) for group in groups))
 
     async def change_config(self):
         config.if_first_time_start = False

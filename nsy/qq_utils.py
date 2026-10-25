@@ -9,10 +9,11 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from contextlib import asynccontextmanager
 import asyncio
+import re
 import time
 from weakref import WeakValueDictionary
 from typing import Sequence
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from nonebot.adapters.qq import Bot, Event, Message, MessageSegment
@@ -226,25 +227,121 @@ def article_card(
     translation: str | None = None,
     translation_source: str | None = None,
 ) -> MessageSegment:
-    """Render an RSS entry as one readable QQ Markdown message."""
-    username = content.get("username", "未知用户")
-    time = content.get("time", "未知时间")
-    link = content.get("link")
-    text = content.get("text") or "（无正文）"
-    meta = f"> ⏰ {time}"
-    if link:
-        meta += f"  ·  [查看原文]({link})"
-
-    parts = [
-        f"# 🐦 @{username} 的新动态",
-        meta,
-        quote_block(f"📝 正文\n{text}"),
-    ]
+    """Render a compact, untruncated card; use article_messages for transport."""
+    parts = [_article_header(content), _article_quote(content.get("text") or "（无正文）")]
     if translation:
-        parts.append(quote_block(f"🌐 中文翻译\n{translation}"))
-        if translation_source:
-            parts.append(f"> 翻译由 {translation_source} 提供")
-    return markdown("\n\n".join(parts))
+        parts.extend((_translation_header(translation_source), _article_quote(translation)))
+    return MessageSegment.markdown("\n\n".join(parts))
+
+
+def _article_metadata(value: object, fallback: str = "", limit: int = 80) -> str:
+    """Bound single-line metadata, leaving the article's text untouched."""
+    text = " ".join(str(value or fallback).split())
+    if len(text) > limit:
+        text = text[:limit - 1] + "…"
+    return re.sub(r"([\\`*_\[\]<>])", r"\\\1", text)
+
+
+def _article_header(content: dict, page: int = 1, total: int = 1) -> str:
+    username = _article_metadata(content.get("username"), "未知用户")
+    header = f"🐦 @{username}"
+    if page == 1:
+        header += f" · {_article_metadata(content.get('time'), '未知时间', 48)}"
+        link = str(content.get("link") or "")
+        if link:
+            # Do not turn an overlong URL into an invalid, silently cut link.
+            encoded_link = quote(link, safe="/:?#[]@!$&'*+,;=%-._~") if len(link) <= 1024 else ""
+            if not encoded_link or len(encoded_link) > 1024:
+                header += " · 原文链接过长"
+            else:
+                header += f" · [查看原文]({encoded_link})"
+    if total > 1:
+        header += f" · {page}/{total}"
+    return header
+
+
+def _translation_header(source: str | None) -> str:
+    return "🌐 译文" + (f" · {_article_metadata(source)}" if source else "")
+
+
+def _article_quote(text: str) -> str:
+    # Keep every source newline sequence and trailing blank line verbatim.
+    # Every source line stays in its quote block, including fenced code. The
+    # unquoted section labels/page boundaries end that block without changing
+    # any source characters or letting a fence consume generated metadata.
+    return "> " + re.sub(r"\r\n|\r|\n", lambda match: f"{match[0]}> ", text)
+
+
+def _article_chunk_end(text: str, start: int, budget: int) -> int:
+    """Find a lossless split after a paragraph, line, space, or character."""
+    low, high = 0, min(len(text) - start, max(0, budget - 2))
+    while low < high:
+        length = (low + high + 1) // 2
+        candidate = text[start:start + length]
+        line_breaks = candidate.count("\n") + candidate.count("\r") - candidate.count("\r\n")
+        quoted_length = length + 2 * (line_breaks + 1)
+        if quoted_length <= budget:
+            low = length
+        else:
+            high = length - 1
+    end = start + low
+    if end == len(text) or end == start:
+        return end
+
+    candidate = text[start:end]
+    paragraphs = list(re.finditer(r"\n(?:[ \t\r]*\n)+", candidate))
+    if paragraphs:
+        return start + paragraphs[-1].end()
+    line_end = max(candidate.rfind("\n"), candidate.rfind("\r"))
+    if line_end >= 0:
+        return start + line_end + 1
+    spaces = list(re.finditer(r"\s+", candidate))
+    return start + spaces[-1].end() if spaces else end
+
+
+def article_messages(
+    content: dict,
+    translation: str | None = None,
+    translation_source: str | None = None,
+) -> list[MessageSegment]:
+    """Page complete RSS text before its independently uploaded images.
+
+    Only metadata may be shortened. Original text and translation are quoted
+    verbatim, including blank lines, and never enter the truncating markdown
+    helper used for command cards.
+    """
+    sections = [("", content.get("text") or "（无正文）")]
+    if translation:
+        sections.append((_translation_header(translation_source), translation))
+
+    def paginate(total: int) -> list[str]:
+        pages = []
+        page = _article_header(content, 1, total)
+        for heading, text in sections:
+            start = 0
+            while start < len(text):
+                separator = "\n\n" + (f"{heading}\n\n" if heading else "")
+                end = _article_chunk_end(text, start, MAX_MARKDOWN_CHARS - len(page) - len(separator))
+                if end == start:
+                    pages.append(page)
+                    page = _article_header(content, len(pages) + 1, total)
+                    continue
+                page += separator + _article_quote(text[start:end])
+                start = end
+                if start < len(text):
+                    pages.append(page)
+                    page = _article_header(content, len(pages) + 1, total)
+        pages.append(page)
+        return pages
+
+    # Page-count digits also occupy the transport budget. Reflow until the
+    # displayed total and the actual number of bounded pages agree.
+    total = 1
+    while True:
+        pages = paginate(total)
+        if len(pages) == total:
+            return [MessageSegment.markdown(page) for page in pages]
+        total = len(pages)
 
 
 def file_image(data: bytes, file_name: str) -> MessageSegment:

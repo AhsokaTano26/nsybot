@@ -29,30 +29,50 @@ class DetailManager:
         return f"{cls.SKIP_PREFIX}{cls._subscription_scope(user_id, group_id)}:{article_id}"
 
     @classmethod
-    async def bootstrap_legacy_subscriptions(cls, session, pairs, seed_first_install=False) -> None:
-        """持久保存首次安装基线意图，并一次性兼容已有订阅。"""
-        if await session.get(Detail, cls.ROLLOUT_ID):
+    async def last_successful_delivery_at(cls, session, group_id: str) -> datetime | None:
+        """只统计该群真实送达的记录，不把初始化或静默记录作为成功推送。"""
+        return await session.scalar(select(func.max(Detail.updated)).where(
+            Detail.id.endswith(f"-{group_id}", autoescape=True),
+            ~Detail.id.startswith(cls.INIT_PREFIX),
+            ~Detail.id.startswith(cls.SKIP_PREFIX),
+        ))
+
+    @classmethod
+    async def bootstrap_legacy_subscriptions(cls, session, pairs, silent_groups=None) -> None:
+        """持久保存本次启动需静默的订阅，并一次性兼容已有订阅。"""
+        silent_groups = silent_groups or set()
+        rollout = await session.get(Detail, cls.ROLLOUT_ID)
+        if rollout and not silent_groups:
             return
-        legacy = await session.scalar(select(Detail.id).where(
+        legacy = None if rollout else await session.scalar(select(Detail.id).where(
             ~Detail.id.startswith(cls.INIT_PREFIX),
             ~Detail.id.startswith(cls.SKIP_PREFIX),
         ).limit(1))
-        if legacy or seed_first_install:
-            for user_id, group_id in pairs:
-                key = cls.initialization_id(user_id, group_id)
-                if not await session.get(Detail, key):
-                    state = "initialized" if legacy else "pending"
-                    session.add(Detail(id=key, summary=state, updated=None))
-        session.add(Detail(id=cls.ROLLOUT_ID, summary="rollout", updated=None))
+        for user_id, group_id in pairs:
+            silent = group_id in silent_groups
+            if not silent and not legacy:
+                continue
+            key = cls.initialization_id(user_id, group_id)
+            marker = await session.get(Detail, key)
+            if marker:
+                if silent:
+                    marker.summary = "pending"
+            else:
+                state = "pending" if silent else "initialized"
+                session.add(Detail(id=key, summary=state, updated=None))
+        if not rollout:
+            session.add(Detail(id=cls.ROLLOUT_ID, summary="rollout", updated=None))
         await session.commit()
 
     @classmethod
-    async def initialize_subscription(cls, session, user_id, group_id, entries):
+    async def initialize_subscription(cls, session, user_id, group_id, entries, push_limit=1):
+        """每轮静默登记窗口外文章；待处理的启动基线始终覆盖全部文章。"""
         key = cls.initialization_id(user_id, group_id)
         marker = await session.get(Detail, key)
-        if marker and marker.summary == "initialized":
-            return
-        seeds = entries if marker and marker.summary == "pending" else entries[3:]
+        if marker and marker.summary == "pending":
+            seeds = entries
+        else:
+            seeds = entries[push_limit:] if push_limit else []
         ids = [record_id for _, article_id in seeds for record_id in (
             f"{article_id}-{group_id}", cls.skip_id(user_id, group_id, article_id),
         )]
@@ -67,7 +87,7 @@ class DetailManager:
             marker.summary = "initialized"
         else:
             session.add(Detail(id=key, summary="initialized", updated=None))
-        # 标记和旧条目基线原子提交；最新三篇的失败不会被下一轮误当作旧条目。
+        # 标记和本轮静默记录原子提交；已送达记录及其时间戳保持不变。
         await session.commit()
 
     @classmethod
@@ -310,6 +330,11 @@ class ContentManager:
         return new_signmsg
 
 class GroupconfigManager:
+    @staticmethod
+    def _validate_push_limit(value: object) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 5:
+            raise ValueError("推送数量必须是 0–5 的整数。")
+
     @classmethod
     async def get_all_group_id(cls, session: async_scoped_session) -> set:
         """获取数据库中所有 student_id"""
@@ -336,6 +361,8 @@ class GroupconfigManager:
     @classmethod
     async def create_signmsg(cls, session: async_scoped_session, **kwargs: object) -> Groupconfig:
         """创建新的数据"""
+        if "push_limit" in kwargs:
+            cls._validate_push_limit(kwargs["push_limit"])
         new_signmsg = Groupconfig(**kwargs)
         session.add(new_signmsg)
         await session.commit()
@@ -354,6 +381,8 @@ class GroupconfigManager:
     @classmethod
     async def update_config(cls, session: async_scoped_session, group_id: str, **kwargs) -> bool:
         """更新群组配置"""
+        if "push_limit" in kwargs:
+            cls._validate_push_limit(kwargs["push_limit"])
         config_obj = await cls.get_Sign_by_group_id(session, group_id)
         if config_obj:
             for key, value in kwargs.items():
