@@ -5,8 +5,12 @@ import unittest
 import importlib.util
 from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import nonebot
+from nonebot.adapters.qq import GroupMessageCreateEvent, Message
+from nonebot.adapters.qq.bot import _check_reply
+from nonebot.exception import FinishedException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
@@ -136,6 +140,223 @@ class BirthdayIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.sessions,
             datetime(2026, 12, day, 15, tzinfo=timezone.utc),
         )
+
+    async def quote_event(self, content="**生日快乐** 🎂\n[祝福](https://example.com)", *,
+                          member="admin-member", attachments=None, quoted=True):
+        event = GroupMessageCreateEvent.model_validate({
+            "id": "command-message", "timestamp": "2026-10-26T23:00:00+08:00",
+            "content": "发送生日语录", "group_id": "group-a", "group_openid": "group-a",
+            "author": {"id": member, "member_openid": member, "bot": False, "member_role": "admin"},
+            "message_type": 103 if quoted else 0,
+            "message_scene": {"ext": ["ref_msg_idx=quoted-index"], "source": "group"},
+            "msg_elements": [{
+                "content": content, "message_type": 0, "msg_idx": "quoted-index",
+                "attachments": attachments,
+            }] if quoted else None,
+        })
+        await _check_reply(None, event)
+        return event
+
+    async def quote_command(self, event, bot=None, args=""):
+        plugin = PLUGIN.module
+        handler = getattr(plugin, "handle_birthday_quote", None)
+        self.assertTrue(callable(handler), "缺少发送生日语录命令")
+        responses = []
+
+        async def finish(message):
+            responses.append(message.data["markdown"].content)
+            raise FinishedException
+
+        from nsy import qq_utils
+
+        with (
+            patch.object(plugin, "get_session", self.sessions),
+            patch.object(nonebot.get_driver().config, "superusers", {"admin-member"}),
+            patch.object(qq_utils, "active_message_limiter", qq_utils.ActiveMessageLimiter(0, 0)),
+            patch.object(plugin.birthday_quote_cmd, "finish", finish),
+        ):
+            with self.assertRaises(FinishedException):
+                await handler(bot or QuoteBot(), event, Message(args))
+        return "\n".join(responses)
+
+    async def add_quote_target(self, group_id):
+        await self.command("群名 目标群", group_id=group_id)
+        await self.command("订阅 MyGO 1", group_id=group_id)
+
+    async def test_quote_targets_only_active_subscriptions_once_and_excludes_source(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        await self.command("订阅 Roselia 2", group_id="group-b")
+        await self.add_quote_target("group-c")
+        await self.command("群名 尚未订阅", group_id="group-unused")
+        await self.add_quote_target("group-unsubscribed")
+        await self.command("退订 MyGO", group_id="group-unsubscribed")
+        bot = QuoteBot()
+        response = await self.quote_command(await self.quote_event(), bot)
+        self.assertEqual([group for group, _ in bot.sent], ["group-b", "group-c"])
+        self.assertEqual([msg.data["markdown"].content for _, msg in bot.sent], [
+            "**生日快乐** 🎂\n[祝福](https://example.com)",
+            "**生日快乐** 🎂\n[祝福](https://example.com)",
+        ])
+        self.assertIn("成功 2 群", response)
+        async with self.sessions() as session:
+            groups = await self.store.BirthdayStore(session).list_groups()
+            self.assertTrue(all(group.last_suggested_name == group.group_name for group in groups))
+
+    async def test_quote_rejects_member_even_when_qq_role_is_admin(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        bot = QuoteBot()
+        response = await self.quote_command(await self.quote_event(member="member"), bot)
+        self.assertIn("超级管理员", response)
+        self.assertEqual(bot.sent, [])
+
+    async def test_quote_requires_group_and_reference_and_no_extra_arguments(self):
+        from nonebot.adapters.qq.event import C2CMessageCreateEvent
+
+        private_event = C2CMessageCreateEvent.model_validate({
+            "id": "private-message", "timestamp": "2026-10-26T23:00:00+08:00",
+            "content": "发送生日语录", "author": {"id": "admin-member", "user_openid": "admin-member"},
+        })
+        for event, args, expected in (
+            (private_event, "", "群"),
+            (await self.quote_event(quoted=False), "", "引用"),
+            (await self.quote_event(), "额外正文", "用法"),
+            (await self.quote_event(content=" \n "), "", "为空"),
+            (await self.quote_event(attachments=[{"content_type": "image/png"}]), "", "附件地址缺失"),
+        ):
+            with self.subTest(expected=expected):
+                bot = QuoteBot()
+                self.assertIn(expected, await self.quote_command(event, bot, args))
+                self.assertEqual(bot.sent, [])
+
+    async def test_quote_sends_each_image_after_markdown_without_losing_attachments(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        await self.add_quote_target("group-c")
+        event = await self.quote_event(attachments=[
+            {"content_type": "image/png", "url": "https://example.com/1.png"},
+            {"content_type": "image/jpeg", "url": "https://example.com/2.jpg"},
+        ])
+        bot = QuoteBot()
+        # Only network I/O is replaced; native QQ reply parsing and all sends remain real.
+        with patch("nsy.plugins.birthday.quotes.download_image", AsyncMock(side_effect=[
+            (b"first-image", "1.png"), (b"second-image", "2.jpg"),
+        ])):
+            response = await self.quote_command(event, bot)
+        for group in ("group-b", "group-c"):
+            messages = [message for target, message in bot.sent if target == group]
+            self.assertEqual([message.type for message in messages], ["markdown", "file_image", "file_image"])
+            self.assertEqual([message.data["content"] for message in messages[1:]], [b"first-image", b"second-image"])
+        self.assertIn("成功 2 群", response)
+
+    async def test_quote_supports_image_only_and_other_media(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        bot = QuoteBot()
+        with patch("nsy.plugins.birthday.quotes.download_image", AsyncMock(return_value=(b"image", "quote.png"))):
+            await self.quote_command(await self.quote_event(content="", attachments=[
+                {"content_type": "image/png", "url": "https://example.com/quote.png"},
+            ]), bot)
+        self.assertEqual([message.type for _, message in bot.sent], ["file_image"])
+        bot.sent.clear()
+        await self.quote_command(await self.quote_event(content="", attachments=[
+            {"content_type": "audio/mpeg", "url": "https://example.com/audio.mp3"},
+            {"content_type": "video/mp4", "url": "https://example.com/video.mp4"},
+            {"content_type": "application/pdf", "url": "https://example.com/quote.pdf"},
+        ]), bot)
+        self.assertEqual([message.type for _, message in bot.sent], ["audio", "video", "file"])
+
+    async def test_quote_long_text_is_sent_completely(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        content = "生日祝福\n\n" * 1000
+        bot = QuoteBot()
+        await self.quote_command(await self.quote_event(content), bot)
+        pages = [message.data["markdown"].content for _, message in bot.sent]
+        self.assertEqual("".join(pages), content)
+        self.assertTrue(all(len(page) <= 3500 for page in pages))
+
+    async def test_quote_pagination_keeps_markdown_blocks_intact(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        emphasis = "**" + "祝" * 1700 + "**\n\n"
+        link = "[祝福](https://example.com)\n\n"
+        code = "```\n" + "福" * 1800 + "\n```\n\n"
+        bot = QuoteBot()
+        await self.quote_command(await self.quote_event(emphasis + link + code), bot)
+        self.assertEqual([message.data["markdown"].content for _, message in bot.sent], [
+            emphasis + link, code,
+        ])
+
+    async def test_quote_oversized_markdown_block_is_rejected_before_any_send(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        for content in (
+            "```\n" + "祝福\n" * 1500 + "```",
+            "**" + "祝福" * 2000 + "**",
+            "[" + "祝福" * 2000 + "](https://example.com)",
+            "[生日祝福][b]\n\n" + "段落\n\n" * 1000 + "[b]: https://example.com",
+        ):
+            with self.subTest(content=content[:10]):
+                bot = QuoteBot()
+                response = await self.quote_command(await self.quote_event(content), bot)
+                self.assertIn("过长", response)
+                self.assertEqual(bot.sent, [])
+
+    async def test_quote_failure_does_not_stop_later_groups_or_count_partial_success(self):
+        await self.seed()
+        for group in ("group-b", "group-c", "group-d"):
+            await self.add_quote_target(group)
+        bot = QuoteBot(failures={("group-b", "markdown"), ("group-c", "file_image")})
+        event = await self.quote_event(attachments=[
+            {"content_type": "image/png", "url": "https://example.com/quote.png"},
+        ])
+        with patch("nsy.plugins.birthday.quotes.download_image", AsyncMock(return_value=(b"image", "quote.png"))):
+            response = await self.quote_command(event, bot)
+        self.assertEqual([(group, message.type) for group, message in bot.sent], [
+            ("group-c", "markdown"), ("group-d", "markdown"), ("group-d", "file_image"),
+        ])
+        self.assertIn("成功 1 群", response)
+        self.assertIn("失败 2 群", response)
+
+    async def test_quote_download_failure_aborts_before_broadcast(self):
+        await self.seed()
+        await self.add_quote_target("group-b")
+        bot = QuoteBot()
+        event = await self.quote_event(attachments=[
+            {"content_type": "image/png", "url": "https://example.com/quote.png"},
+        ])
+        with patch("nsy.plugins.birthday.quotes.download_image", AsyncMock(side_effect=RuntimeError("download failed"))):
+            response = await self.quote_command(event, bot)
+        self.assertIn("失败", response)
+        self.assertEqual(bot.sent, [])
+
+    async def test_quote_no_other_subscribed_groups_reports_no_targets(self):
+        await self.seed()
+        bot = QuoteBot()
+        response = await self.quote_command(await self.quote_event(), bot)
+        self.assertIn("没有", response)
+        self.assertEqual(bot.sent, [])
+
+    async def test_quote_source_group_does_not_need_a_birthday_subscription(self):
+        await self.command("增加标签 MyGO")
+        await self.add_quote_target("group-b")
+        bot = QuoteBot()
+        response = await self.quote_command(await self.quote_event(), bot)
+        self.assertEqual([group for group, _ in bot.sent], ["group-b"])
+        self.assertIn("成功 1 群", response)
+
+    async def test_quote_command_is_registered_without_birthday_prefix(self):
+        from nonebot.rule import TrieRule
+
+        matcher = getattr(PLUGIN.module, "birthday_quote_cmd", None)
+        self.assertIsNotNone(matcher, "应注册独立命令「发送生日语录」")
+        event = await self.quote_event()
+        state = {}
+        with patch.object(nonebot.get_driver().config, "command_start", {""}):
+            TrieRule.get_value(None, event, state)
+            self.assertTrue(await matcher.rule(None, event, state))
 
     async def test_reminder_contains_only_subscribed_birthdays_and_copyable_name(self):
         await self.seed()
@@ -300,6 +521,20 @@ class BirthdayIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.send, self.sessions, datetime(2026, 10, 11, 15, tzinfo=timezone.utc)
         )
         self.assertIn("测试群🎉@伊藤美来生日快乐🎉", self.sent[0][1])
+
+
+class QuoteBot:
+    self_id = "birthday-test-bot"
+
+    def __init__(self, failures=()):
+        self.sent = []
+        self.failures = set(failures)
+
+    async def send_to_group(self, *, group_openid, message):
+        if (group_openid, message.type) in self.failures:
+            raise RuntimeError("simulated QQ failure")
+        self.sent.append((group_openid, message))
+        return {"id": "sent-message"}
 
 
 class MigrationTests(unittest.TestCase):

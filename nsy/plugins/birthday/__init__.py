@@ -2,7 +2,7 @@
 
 from apscheduler.triggers.cron import CronTrigger
 from nonebot import get_bot, get_driver, get_plugin_config, on_command, on_type, require
-from nonebot.adapters.qq import Event, GroupDelRobotEvent, GroupMessageCreateEvent, Message
+from nonebot.adapters.qq import Bot, Event, GroupDelRobotEvent, GroupMessageCreateEvent, Message
 from nonebot.log import logger
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
@@ -15,6 +15,7 @@ from nsy.qq_utils import error, info, markdown, send_group_message, user_openid
 
 from .commands import HELP, execute_command
 from .config import Config
+from .quotes import broadcast_quote
 from .service import run_reminders
 from .store import BirthdayStore
 
@@ -76,6 +77,40 @@ async def handle_birthday(event: Event, args: Message = CommandArg()) -> None:
         logger.exception("生日命令数据库操作失败")
         await birthday_cmd.finish(error("生日数据操作失败，请查看日志后重试。", "🎂 生日助手"))
     await birthday_cmd.finish(markdown(result) if result.startswith("# ") else info(result, "🎂 生日助手"))
+
+
+birthday_quote_cmd = on_command("发送生日语录", priority=10, block=True)
+
+
+@birthday_quote_cmd.handle()
+async def handle_birthday_quote(bot: Bot, event: Event, args: Message = CommandArg()) -> None:
+    try:
+        if user_openid(event) not in set(get_driver().config.superusers):
+            raise ValueError("只有超级管理员可以发送生日语录。")
+        if not isinstance(event, GroupMessageCreateEvent):
+            raise ValueError("请在 QQ 群内引用消息并发送「发送生日语录」。")
+        if any(segment.type != "text" or segment.data["text"].strip() for segment in args):
+            raise ValueError("用法：引用要发送的消息，再发送「发送生日语录」，无需附加正文。")
+        quote = event.get_reply_message()
+        if quote is None:
+            raise ValueError("请先引用要发送的生日语录，再发送「发送生日语录」。")
+        if event.reply and any(not attachment.url for attachment in event.reply.attachments or []):
+            raise ValueError("引用消息的附件地址缺失，无法完整发送，请重新引用。")
+        if not quote or not any(segment.type != "text" or segment.data["text"].strip() for segment in quote):
+            raise ValueError("引用消息内容为空，请引用要发送的生日语录。")
+        sent, failed = await broadcast_quote(bot, str(event.group_openid), quote, get_session)
+    except ValueError as exc:
+        await birthday_quote_cmd.finish(error(str(exc), "🎂 生日语录"))
+    except SQLAlchemyError:
+        logger.exception("生日语录读取订阅失败")
+        await birthday_quote_cmd.finish(error("生日订阅读取失败，请查看日志后重试。", "🎂 生日语录"))
+
+    if sent == failed == 0:
+        await birthday_quote_cmd.finish(info("排除来源群后，没有其他有生日订阅的群。", "🎂 生日语录"))
+    result = f"生日语录发送完成：成功 {sent} 群，失败 {failed} 群。已自动排除来源群。"
+    if failed:
+        result += "\n失败群可能已收到部分内容，详情请查看日志。"
+    await birthday_quote_cmd.finish(info(result, "🎂 生日语录"))
 
 
 group_removed = on_type(GroupDelRobotEvent, priority=20, block=False)
