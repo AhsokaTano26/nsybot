@@ -154,6 +154,10 @@ def command_keyboard(
     Each item is ``(label, command, enter)``. ``enter=True`` directly sends a
     command; ``False`` only fills it into the input box for required arguments.
     """
+    if not 1 <= len(rows) <= 5:
+        raise ValueError("QQ 指令键盘需要 1–5 行按钮。")
+    if any(not 1 <= len(row) <= 5 for row in rows):
+        raise ValueError("QQ 指令键盘每行需要 1–5 个按钮。")
     keyboard_rows = []
     for row_index, row in enumerate(rows):
         buttons = []
