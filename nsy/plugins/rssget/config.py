@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 
 class Config(BaseModel):
@@ -25,6 +25,17 @@ class Config(BaseModel):
 
     # 更新时间配置
     refresh_time: int = Field(default=20, gt=0)
+
+    # 复用 NoneBot HTTP 服务；默认关闭，启用必须配置独立 Token。
+    rss_image_sync_enabled: bool = False
+    rss_image_sync_token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def validate_image_sync_token(self):
+        token = self.rss_image_sync_token
+        if self.rss_image_sync_enabled and (token is None or not token.get_secret_value().strip()):
+            raise ValueError("启用图片同步 API 必须配置 RSS_IMAGE_SYNC_TOKEN")
+        return self
 
     # 帮助信息
     help_msg_1: str = """# 🤖 nsy 推文助手 · 本群快捷操作

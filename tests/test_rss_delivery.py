@@ -540,6 +540,8 @@ class RSSDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.feed.entries[0]["summary"] = '<div class="rsshub-quote">自己的引用</div>'
         await self.run_scheduled()
         self.assertEqual(self.bot.sent, [])
+        async with self.sessions() as session:
+            self.assertEqual(len((await session.scalars(select(self.models.Content))).all()), 1)
 
     async def test_failed_first_fetch_preserves_pending_baseline_until_valid_feed(self):
         await self.seed()
@@ -830,6 +832,41 @@ class RSSDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(replies[-1].type, "file_image")
                 self.assertTrue(all(message.type == "markdown" for message in replies[:-1]))
                 self.assertTrue(all(later - earlier >= 3.1 - 1e-9 for earlier, later in zip(sent_at, sent_at[1:])))
+
+    async def test_full_feed_is_cached_before_group_window_and_startup_silence(self):
+        await self.seed(push_limit=1)
+        older = dict(self.feed.entries[0], id="older", guid="older", link="https://example.com/older")
+        older["summary"] = '旧正文<img src="https://example.com/older.jpg">'
+        self.feed.entries.append(older)
+        with patch.object(self.functions.config, "if_first_time_start", True):
+            await self.rss.refresh_article()
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertEqual({row.link for row in cached}, {"https://example.com/post-1", "https://example.com/older"})
+        self.assertIn("旧正文", next(row.text for row in cached if row.link.endswith("older")))
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_full_cache_preserves_translation_and_only_translates_delivered_articles(self):
+        from nsy.plugins.rssget import format_json
+
+        await self.seed(push_limit=1)
+        async with self.sessions.begin() as session:
+            platform = await session.get(self.models.Plantform, "test")
+            platform.need_trans = "1"
+        older = dict(self.feed.entries[0], id="older", guid="older", link="https://example.com/older")
+        self.feed.entries.append(older)
+        translator = AsyncMock()
+        translator.main.return_value = "保留译文"
+        with patch.dict(format_json.PLATFORMS, {format_json.TRANS_PLATFORM: translator}):
+            await self.rss.R.handle_rss("account", ["group-a"], await self._group_configs())
+            await self.rss.R.handle_rss("account", ["group-a"], await self._group_configs())
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertEqual(len(cached), 2)
+        self.assertEqual([row.trans_text for row in cached if row.link.endswith("post-1")], ["保留译文"])
+        self.assertEqual([row.trans_text for row in cached if row.link.endswith("older")], [None])
+        self.assertEqual(translator.main.await_count, 1)
+        self.assertEqual(len(self.bot.sent), 1)
 
     async def _group_configs(self):
         async with self.sessions() as session:

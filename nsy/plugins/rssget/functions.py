@@ -15,7 +15,7 @@ from .format_json import Format
 from .get_id import get_id
 from .models_method import DetailManager, PlantformManager, UserManager
 from .trans_msg import if_self_trans, if_trans
-from .update_text import get_text, update_text
+from .update_text import cache_entries, get_text, update_text
 from nsy.qq_utils import article_messages, download_image, error, file_image, send_group_message
 
 config = get_plugin_config(Config)
@@ -249,6 +249,7 @@ class rss_get():
                 seen.add(trueid)
         if not entries_info:
             return
+        await cache_entries(entries_info, username)
         groups = list(dict.fromkeys(map(str, group_id_list)))
         configs = group_configs or {}
         flags = {
@@ -263,10 +264,10 @@ class rss_get():
             except (ValueError, SyntaxError, TypeError, AttributeError, SQLAlchemyError) as exc:
                 logger.warning(f"文章缓存不可用，将从 RSS 重建：{type(exc).__name__}")
                 content = None
-            if not content:
-                translate = need_trans if any(
-                    _parse_group_config(configs.get(target))["if_need_translate"] for target in groups
-                ) else 0
+            translate = need_trans if any(
+                _parse_group_config(configs.get(target))["if_need_translate"] for target in groups
+            ) else 0
+            if not content or (translate and not content.get("trans_text")):
                 content = await Format().extract_content(entry, translate)
                 content.update(username=username, id=trueid)
                 await update_text(content)

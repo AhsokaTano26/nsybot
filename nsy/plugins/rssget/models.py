@@ -1,5 +1,5 @@
 from nonebot_plugin_orm import Model
-from sqlalchemy import Column, String, Text, DateTime, BOOLEAN, CheckConstraint, Integer
+from sqlalchemy import Column, String, Text, DateTime, BOOLEAN, CheckConstraint, ForeignKey, Integer
 
 
 class Detail(Model):
@@ -37,6 +37,15 @@ class Content(Model):
     trans_text = Column(String(255), nullable=True)
     image_num = Column(String(255), nullable=True)
     images = Column(Text, nullable=True)
+
+
+class ImageSync(Model):
+    """图片文章首次入库的顺序，与发布时间及 QQ 推送记录无关。"""
+
+    __tablename__ = "rss_image_sync"
+    __table_args__ = {"sqlite_autoincrement": True}
+    seq = Column(Integer, primary_key=True, autoincrement=True)
+    content_id = Column(String(255), ForeignKey("Content.id"), nullable=False, unique=True)
 
 class Groupconfig(Model):
     __tablename__ = "Group_config"

@@ -1,13 +1,14 @@
 version: "3"
 
-x-config-host: &config-host ${HOST:-127.0.0.1}
+x-config-host: &config-host ${HOST:-0.0.0.0}
 x-config-port: &config-port ${PORT:-12035}
 
 services:
   nonebot:
     build: .
     image: tano26/nsybot:latest
-    ports:
+    # 只声明容器端口，不发布到宿主机；跨项目通信使用共享 Docker 网络。
+    expose:
       - *config-port
     env_file:
       - .env.prod

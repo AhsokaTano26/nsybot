@@ -32,7 +32,8 @@ from .models_method import (ContentManager, DetailManager, GroupconfigManager,
                             PlantformManager, SubscribeManager, UserManager)
 from .platforms import PLATFORM_USAGES, execute_platform_command
 from .translation import Ali, BaiDu, DeepSeek, Ollama
-from .update_text import get_text, update_text
+from .update_text import cache_feed, get_text, update_text
+from .image_sync import register_image_sync_api
 from nsy import qq_utils
 from nsy.qq_utils import (article_messages, command_keyboard, download_image,
                           error, file_image, group_openid, info, is_c2c_event,
@@ -57,6 +58,7 @@ logger.add("data/log/info_log.txt", level="INFO",rotation="5 MB", retention="10 
 logger.add("data/log/error_log.txt", level="ERROR",rotation="5 MB")
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
+register_image_sync_api()
 
 # 当前进程已收到的退群事件，防止延迟到达的旧消息重新登记已离开的群。
 _departed_groups: dict[str, datetime] = {}
@@ -420,12 +422,13 @@ async def handle_rss_cmd(event: GroupMessageCreateEvent,args: Message = CommandA
             latest = data.entries[num]
             trueid = await get_id(latest)
             try:
+                await cache_feed(data.entries, username)
 
                 async with (get_session() as db_session):
                     existing_lanmsg = await ContentManager.get_Sign_by_student_id(
                         db_session, trueid)
 
-                    if existing_lanmsg:  # 如有记录
+                    if existing_lanmsg and (not if_need_trans or existing_lanmsg.trans_text):
                         logger.info(f"该 {trueid} 推文已存在")
                         content = await get_text(trueid)    #从本地数据库获取信息
                         content["username"] = username

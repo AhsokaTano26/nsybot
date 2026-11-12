@@ -35,7 +35,7 @@ docker compose pull
 docker compose up -d
 ```
 
-默认使用 WebSocket 接收事件。若使用 Webhook，需要配置公网回调和端口映射，见 [QQ 接入说明](qq-official-bot.md#配置)。
+默认使用 WebSocket 接收事件，Compose 只声明容器内 HTTP 端口，不向宿主机发布端口。同一 VPS 上的 aiaibot 可通过共享 Docker 网络调用 [内部图片同步 API](image-sync.md)。若使用 Webhook，需要自行配置公网回调和端口映射，并在反向代理拒绝 `/internal/` 路径，见 [QQ 接入说明](qq-official-bot.md#配置)。
 
 ## 环境配置
 
@@ -53,6 +53,8 @@ docker compose up -d
 | `API_KEY` / `MODEL_NAME` | DeepSeek API Key 与翻译模型名 |
 | `TARGET_GROUP_OPENID` | 可选的运维通知群 OpenID |
 | `BIRTHDAY_REMINDER_ENABLED` | 生日定时提醒开关，默认 `true` |
+| `RSS_IMAGE_SYNC_ENABLED` | 内部图片 API 开关，默认 `false` |
+| `RSS_IMAGE_SYNC_TOKEN` | API 独立 Bearer Token；启用时不能为空 |
 
 当前默认翻译器为 DeepSeek，不使用 `SECRET_KEY`。代码中还保留百度、阿里等翻译类；切换翻译器需要修改 RSS 插件中的实例，不能只靠更换密钥完成。
 

@@ -1,0 +1,15 @@
+# 与基础配置合并：docker compose -f docker-compose.yml -f docker-compose.image-sync.yml up -d
+services:
+  nonebot:
+    environment:
+      HOST: 0.0.0.0
+    networks:
+      default: {}
+      image-sync:
+        aliases:
+          - nsybot-sync
+
+networks:
+  image-sync:
+    external: true
+    name: ${NSYBOT_SYNC_NETWORK:-bot-sync}

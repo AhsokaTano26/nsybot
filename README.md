@@ -9,6 +9,7 @@
 - **RSS 推送**：通过 RSSHub 订阅多平台动态，定时推送到 QQ 群。
 - **群内管理**：订阅选择面板、批量订阅，以及各群独立的推送设置。
 - **中文翻译**：默认使用 DeepSeek，文章与翻译结果本地缓存。
+- **内部图片同步**：按群订阅抓取并完整缓存 RSS 条目，供同一 VPS 上独立部署的 aiaibot 通过 Token 鉴权与游标分页拉取图片元数据。
 - **生日提醒**：按标签订阅，每天北京时间 23:00 提醒手动修改或恢复群名称，并给出完整建议昵称；超管可引用富文本发送生日语录到其他生日订阅群。
 
 ## 快速开始
@@ -38,6 +39,7 @@ docker compose logs -f nonebot
 | [部署说明](docs/deployment.md) | Docker、本地运行、开发与环境配置 |
 | [QQ 官方 Bot 接入](docs/qq-official-bot.md) | 凭据、WebSocket / Webhook、OpenID 与权限 |
 | [RSS 使用指南](docs/rss.md) | 平台配置、订阅命令、群组设置与管理命令 |
+| [内部图片同步 API](docs/image-sync.md) | 全量缓存、增量与历史拉取、Token 鉴权及 Docker 内网接入 |
 | [生日提醒](docs/birthday.md) | 启用、订阅、昵称格式与提醒规则 |
 | [生日数据导入](docs/birthday-import-commands.md) | 批量导入命令与关联标签 |
 | [生日数据核查](docs/birthday-data-audit.md) | 角色与声优生日的核查结果和来源 |

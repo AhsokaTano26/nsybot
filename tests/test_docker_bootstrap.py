@@ -24,6 +24,7 @@ class DockerBootstrapTests(unittest.TestCase):
                 "API_KEY": "test-key", "SQLALCHEMY_DATABASE_URL": "sqlite+aiosqlite:///:memory:",
                 "LOCALSTORE_DATA_DIR": directory, "LOCALSTORE_CACHE_DIR": directory,
                 "LOCALSTORE_CONFIG_DIR": directory, "ALEMBIC_STARTUP_CHECK": "false",
+                "RSS_IMAGE_SYNC_ENABLED": "true", "RSS_IMAGE_SYNC_TOKEN": "bootstrap-test-token",
             })
             result = subprocess.run(
                 [sys.executable, "-c", (
@@ -31,6 +32,12 @@ class DockerBootstrapTests(unittest.TestCase):
                     "from docker._main import app\n"
                     "assert callable(app)\n"
                     "assert nonebot.get_plugin('rssget') is not None\n"
+                    "import asyncio, httpx\n"
+                    "async def check_auth():\n"
+                    "    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://internal') as client:\n"
+                    "        response = await client.get('/internal/v1/images')\n"
+                    "        assert response.status_code == 401, response.text\n"
+                    "asyncio.run(check_auth())\n"
                 )],
                 cwd=directory, env=env, text=True, capture_output=True, timeout=30,
             )
