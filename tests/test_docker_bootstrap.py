@@ -20,7 +20,7 @@ class DockerBootstrapTests(unittest.TestCase):
                 "PYTHONPATH": str(root), "PYTHONDONTWRITEBYTECODE": "1",
                 "DRIVER": "~fastapi+~httpx", "LOG_LEVEL": "ERROR",
                 "QQ_APP_ID": "test-app", "QQ_APP_SECRET": "test-secret",
-                "QQ_APP_TOKEN": "", "QQ_USE_WEBSOCKET": "false",
+                "QQ_USE_WEBSOCKET": "false",
                 "API_KEY": "test-key", "SQLALCHEMY_DATABASE_URL": "sqlite+aiosqlite:///:memory:",
                 "LOCALSTORE_DATA_DIR": directory, "LOCALSTORE_CACHE_DIR": directory,
                 "LOCALSTORE_CONFIG_DIR": directory, "ALEMBIC_STARTUP_CHECK": "false",

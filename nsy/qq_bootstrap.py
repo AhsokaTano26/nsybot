@@ -23,9 +23,6 @@ def build_qq_bots() -> str:
 
     bot = {
         "id": app_id,
-        # 1.7.x keeps this legacy required field in its Pydantic model, although
-        # Access Token authentication uses AppID and AppSecret.
-        "token": os.getenv("QQ_APP_TOKEN", ""),
         "secret": app_secret,
         "intent": {
             "c2c_group_at_messages": _as_bool(

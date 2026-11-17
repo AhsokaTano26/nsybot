@@ -30,7 +30,7 @@ nonestorage==0.1.0
 pydantic==2.13.5
 typing-inspection==0.4.4
 typing_extensions==4.16.0
-nonebot-adapter-qq>=1.7.2,<2.0
+nonebot-adapter-qq>=1.7.4,<2.0
 nonebot2>=2.5.0,<3.0
 nonechat==0.3.0
 noneprompt==0.1.9

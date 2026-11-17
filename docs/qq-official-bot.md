@@ -4,24 +4,27 @@
 客户端登录或 OneBot WebSocket 服务。部署配置使用扁平环境变量，启动时自动
 生成适配器内部需要的 `QQ_BOTS` JSON。
 
+适配器最低版本为 `1.7.4`，要求 Python 3.10 及以上；Docker 继续使用 Python 3.12。
+
 ## 配置
 
 以 `.env.example` 创建 `.env.prod`，并在 QQ 开放平台创建机器人后填写：
 
 ```dotenv
 DRIVER=~fastapi+~websockets+~httpx
-QQ_IS_SANDBOX=false
 QQ_APP_ID=<AppID>
 QQ_APP_SECRET=<AppSecret>
-QQ_APP_TOKEN=
 QQ_USE_WEBSOCKET=true
 SUPERUSERS='["<member_openid>"]'
 TARGET_GROUP_OPENID=<group_openid>
 ```
 
 `QQ_C2C_GROUP_AT_MESSAGES=true`（默认）用于群内 @ 机器人的指令和私聊指令。
-`QQ_APP_TOKEN` 是适配器 1.7.x 的兼容必填字段，通常可留空。若需多机器人或
-特殊 Intent，可直接填写 `QQ_BOTS`。当同时设置完整的 `QQ_APP_ID` 与
+认证只需 `QQ_APP_ID` 与 `QQ_APP_SECRET`。适配器自 1.7.3 起移除了旧 Bot Token
+与沙箱开关，示例中不再填写 `QQ_APP_TOKEN`、`QQ_IS_SANDBOX`；旧环境中保留这些
+字段不会生效。默认 API 地址由新版适配器提供，无需手动覆盖。
+
+若需多机器人或特殊 Intent，可直接填写 `QQ_BOTS`。当同时设置完整的 `QQ_APP_ID` 与
 `QQ_APP_SECRET` 时，扁平字段优先；仅设置 `QQ_BOTS` 时则保留其高级多机器人配置。
 
 默认使用 QQ 官方 Bot 的 WebSocket 事件连接。若改用 Webhook，设置
