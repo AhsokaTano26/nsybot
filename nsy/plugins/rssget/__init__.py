@@ -15,6 +15,9 @@ from nonebot.message import event_preprocessor
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
+
+# 注册 ORM 插件及其启动钩子，不依赖其他插件或测试预先加载。
+require("nonebot_plugin_orm")
 from nonebot_plugin_orm import get_session
 from sqlalchemy import delete
 from sqlalchemy.exc import SQLAlchemyError

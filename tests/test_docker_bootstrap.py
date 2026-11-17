@@ -10,6 +10,28 @@ from pathlib import Path
 
 
 class DockerBootstrapTests(unittest.TestCase):
+    def test_rss_loads_orm_without_another_plugin_preloading_it(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="nsybot-rss-bootstrap-") as directory:
+            env = os.environ.copy()
+            env.update({"PYTHONPATH": str(root), "API_KEY": "test-key", "PYTHONDONTWRITEBYTECODE": "1"})
+            result = subprocess.run(
+                [sys.executable, "-c", (
+                    "from pathlib import Path\n"
+                    "import nonebot\n"
+                    "nonebot.init(driver='~fastapi', log_level='ERROR', "
+                    "sqlalchemy_database_url='sqlite+aiosqlite:///:memory:', "
+                    "localstore_data_dir=Path('data'), localstore_cache_dir=Path('cache'), "
+                    "localstore_config_dir=Path('config'))\n"
+                    "assert nonebot.get_plugin('nonebot_plugin_orm') is None\n"
+                    "plugin = nonebot.load_plugin('nsy.plugins.rssget')\n"
+                    "assert plugin is not None, 'RSS 插件必须能独立加载'\n"
+                    "assert nonebot.get_plugin('nonebot_plugin_orm') is not None\n"
+                )],
+                cwd=directory, env=env, text=True, capture_output=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_asgi_import_initializes_nonebot_and_loads_rss(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="nsybot-asgi-test-") as directory:

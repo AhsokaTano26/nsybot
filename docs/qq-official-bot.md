@@ -34,7 +34,9 @@ TARGET_GROUP_OPENID=<group_openid>
 ## OpenID 与权限
 
 官方群接口的 `group_openid` 和 `member_openid` 都是字符串，不能填 QQ 群号或
-QQ 号。第一次在目标群 @ 机器人后，从事件日志取得两个值，并分别写入：
+QQ 号。在目标群发送 `群信息`（或 `group-info`）可查看可复制的群 OpenID 和发送人
+OpenID；昵称优先取消息事件，缺失时尝试官方群成员接口。接口未授权、未返回昵称或
+超过 5 秒未响应时显示“未知”，仍正常返回 ID。取得 OpenID 后分别写入：
 
 - `SUPERUSERS`：允许跨群查询、用户管理、群发和运维等全局命令的成员；
 - `IGNORED_GROUP_OPENIDS` / `BROADCAST_BAN_OPENIDS`：群过滤名单；
