@@ -22,6 +22,8 @@ docker compose logs -f nonebot
 
 容器启动时自动执行 `nb orm upgrade`，创建或升级数据表，无需手动创建空数据库文件。`./data` 挂载到容器的 `/app/data`，用于保存 SQLite 数据；更新前备份该目录。
 
+本次 RSS 升级新增账号窗口缓存、Twitter 采集状态、待上报状态及 `rss_ingest_queue` 入库补偿表，保留现有文章、图片游标与群推送记录。队列与 SQLite 文件一起持久化在挂载的数据目录。Twitter 上下线使用 `UT_URL` 上报 Uptime Kuma，由 Kuma 发送通知；可通过 `RSS_TWITTER_COOLDOWN` 和 `RSS_TWITTER_FAILURE_THRESHOLD` 调整故障退避，默认分别为 900 秒和 3 个连续失败账号，详见 [RSS 说明](rss.md#twitter-限流与上下线通知)。
+
 发布镜像为 [tano26/nsybot:latest](https://hub.docker.com/r/tano26/nsybot/tags)，也可从当前代码构建：
 
 ```bash
@@ -49,9 +51,14 @@ docker compose up -d
 | `SQLALCHEMY_DATABASE_URL` | Docker 使用 `sqlite+aiosqlite:////app/data/db.sqlite3` |
 | `RSSHUB_HOST` | RSSHub 实例地址；插件默认 `https://rsshub.app`，需替换示例占位值 |
 | `RSSHUB_HOST_BACK` | 备用实例地址的 JSON 数组，可设为 `[]` |
-| `REFRESH_TIME` | RSS 更新间隔，单位分钟，默认 `20` |
+| `REFRESH_TIME` | 全账户 RSS 采集间隔，单位分钟，默认 `20`；全天运行 |
+| `RSS_PUSH_INTERVAL` | 独立 QQ 缓存推送检查间隔，单位秒，默认 `60`；夜间休息规则保留 |
+| `RSS_FETCH_RETRY_BASE` | RSS 请求首次重试等待秒数，默认 `2`；三次等待按指数增长后切备用实例 |
+| `RSS_INGEST_RETRY_INTERVAL` | 独立入库补偿检查间隔，默认 `60` 秒 |
+| `RSS_INGEST_RETRY_BATCH` | 每次补偿最多处理的到期条目数，默认 `100` |
 | `API_KEY` / `MODEL_NAME` | DeepSeek API Key 与翻译模型名 |
 | `TARGET_GROUP_OPENID` | 可选的运维通知群 OpenID |
+| `UT_URL` | Twitter 采集的 Uptime Kuma Push URL；通知渠道在 Kuma 配置，心跳间隔需覆盖采集间隔及一轮耗时 |
 | `BIRTHDAY_REMINDER_ENABLED` | 生日定时提醒开关，默认 `true` |
 | `RSS_IMAGE_SYNC_ENABLED` | 内部图片 API 开关，默认 `false` |
 | `RSS_IMAGE_SYNC_TOKEN` | API 独立 Bearer Token；启用时不能为空 |

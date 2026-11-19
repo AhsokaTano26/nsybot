@@ -47,6 +47,48 @@ class ImageSync(Model):
     seq = Column(Integer, primary_key=True, autoincrement=True)
     content_id = Column(String(255), ForeignKey("Content.id"), nullable=False, unique=True)
 
+
+class RSSFeedCache(Model):
+    """各账号最近一次有效 RSS 窗口，保留条目顺序供独立推送读取。"""
+
+    __tablename__ = "rss_feed_cache"
+    account_id = Column(String(255), primary_key=True, nullable=False)
+    entries = Column(Text, nullable=False)
+    digest = Column(String(64), nullable=False)
+    collected_at = Column(DateTime, nullable=False)
+
+
+class RSSSourceStatus(Model):
+    __tablename__ = "rss_source_status"
+    source = Column(String(32), primary_key=True, nullable=False)
+    available = Column(BOOLEAN, nullable=False)
+    observed_at = Column(DateTime, nullable=False)
+    retry_at = Column(DateTime, nullable=True)
+
+
+class RSSSourceNotice(Model):
+    __tablename__ = "rss_source_notice"
+    __table_args__ = {"sqlite_autoincrement": True}
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(32), nullable=False)
+    available = Column(BOOLEAN, nullable=False)
+    observed_at = Column(DateTime, nullable=False)
+
+
+class RSSIngestQueue(Model):
+    """先持久化原始条目，入库成功后与文章、图片索引原子确认。"""
+
+    __tablename__ = "rss_ingest_queue"
+    id = Column(String(255), primary_key=True, nullable=False)
+    username = Column(String(255), nullable=True)
+    entry = Column(Text, nullable=False)
+    version = Column(String(64), nullable=False)
+    attempts = Column(Integer, nullable=False)
+    next_retry_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False)
+    last_error = Column(String(64), nullable=True)
+
+
 class Groupconfig(Model):
     __tablename__ = "Group_config"
     __table_args__ = (

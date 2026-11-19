@@ -19,23 +19,24 @@ from nonebot.rule import Rule
 # 注册 ORM 插件及其启动钩子，不依赖其他插件或测试预先加载。
 require("nonebot_plugin_orm")
 from nonebot_plugin_orm import get_session
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from nsy.plugins.rssget.models import User
 
 from .encrypt import encrypt
+from .availability import FeedUnavailable, SourceHealthManager, is_twitter_account, utc_now
 from .following_import import fetch_and_match
 from .functions import config, rss_get, fetch_feed, _parse_group_config, _delivery_lock
 from .format_json import Format
 from .get_id import get_id
-from .models import BotGroup, Detail, Groupconfig, Subscribe
+from .models import BotGroup, Detail, Groupconfig, Plantform, RSSFeedCache, Subscribe
 from .group_registry import BotGroupManager
 from .models_method import (ContentManager, DetailManager, GroupconfigManager,
                             PlantformManager, SubscribeManager, UserManager)
 from .platforms import PLATFORM_USAGES, execute_platform_command
 from .translation import Ali, BaiDu, DeepSeek, Ollama
-from .update_text import cache_feed, get_text, update_text
+from .update_text import cache_feed, get_text, retry_pending_entries, update_text
 from .image_sync import register_image_sync_api
 from nsy import qq_utils
 from nsy.qq_utils import (article_messages, command_keyboard, download_image,
@@ -398,60 +399,33 @@ async def handle_rss_cmd(event: GroupMessageCreateEvent,args: Message = CommandA
     elif userid not in sheet1:
         await rss_cmd.finish(warning("该用户不在可访问列表中。", "🐦 RSS 查询"))
     else:
-        async with (get_session() as db_session):
-            plantform = await UserManager.get_Sign_by_student_id(db_session, userid)
-            plantform = plantform.Plantform
-            plantform_name = await PlantformManager.get_Sign_by_student_id(db_session, plantform)
-            url = plantform_name.url
-            if_need_trans = int(plantform_name.need_trans)
-            feed_url = f"{config.rsshub_host}{url}{userid}"
-            user = await User_name_get(userid)
-            username = user.User_Name
-
-            # 获取数据
-            data = await fetch_feed(feed_url)
-            if "error" in data:
-                await rss_cmd.finish(error(data["error"], "🐦 RSS 查询"))
-
-            if not data.get("entries"):
-                await rss_cmd.finish(info("该用户暂无动态，或用户不存在。", "🐦 RSS 查询"))
-
-            if num < 0 or num >= len(data.entries):
-                await rss_cmd.finish(error(
-                    f"可用序号为 `0-{len(data.entries) - 1}`。", "🐦 RSS 查询"
-                ))
-
-            # 处理最新一条推文
-            latest = data.entries[num]
-            trueid = await get_id(latest)
-            try:
-                await cache_feed(data.entries, username)
-
-                async with (get_session() as db_session):
-                    existing_lanmsg = await ContentManager.get_Sign_by_student_id(
-                        db_session, trueid)
-
-                    if existing_lanmsg and (not if_need_trans or existing_lanmsg.trans_text):
-                        logger.info(f"该 {trueid} 推文已存在")
-                        content = await get_text(trueid)    #从本地数据库获取信息
-                        content["username"] = username
-                        translation = None
-                        if if_need_trans == 1:
-                            translation = content.get("trans_text") or "（暂无翻译）"
-                        await _send_rss_article(group_openid(event), content, translation)
-                    else:   #从RSSHUB获取信息
-                        logger.info(f"该 {trueid} 推文不存在")
-                        content = await extract_content(latest,if_need_trans)
-                        content["username"] = username
-                        content["id"] = trueid
-                        await update_text(content)
-                        logger.info(f"成功获取对于 {username} 的 {trueid} 推文")
-                        translation = None
-                        if if_need_trans == 1:
-                            translation = content.get("trans_text") or "（暂无翻译）"
-                        await _send_rss_article(group_openid(event), content, translation)
-            except Exception as e:
-                logger.opt(exception=False).error(f"数据库操作错误: {e}")
+        async with get_session() as db_session:
+            user = await UserManager.get_Sign_by_student_id(db_session, userid)
+            platform = await PlantformManager.get_Sign_by_student_id(db_session, user.Plantform)
+            username, route, platform_name = user.User_Name, platform.url, platform.name
+            if_need_trans = int(platform.need_trans)
+        try:
+            data = await R._fetch_user_feed(userid, route, platform_name)
+        except FeedUnavailable:
+            await rss_cmd.finish(error("所有 RSSHub 源请求失败，请稍后重试。", "🐦 RSS 查询"))
+        if not data.get("entries"):
+            await rss_cmd.finish(info("该用户暂无动态，或用户不存在。", "🐦 RSS 查询"))
+        if num < 0 or num >= len(data.entries):
+            await rss_cmd.finish(error(f"可用序号为 `0-{len(data.entries) - 1}`。", "🐦 RSS 查询"))
+        latest = data.entries[num]
+        trueid = await get_id(latest)
+        try:
+            await cache_feed(data.entries, username)
+            content = await get_text(trueid)
+            if not content or (if_need_trans and not content.get("trans_text")):
+                content = await extract_content(latest, if_need_trans)
+                content.update(username=username, id=trueid)
+                await update_text(content)
+            content["username"] = username
+            translation = (content.get("trans_text") or "（暂无翻译）") if if_need_trans == 1 else None
+            await _send_rss_article(group_openid(event), content, translation)
+        except Exception as e:
+            logger.opt(exception=False).error(f"数据库操作错误: {e}")
 
 
 rss_sub = on_command("rss_sub", aliases={"订阅"}, priority=10, rule=group_rule)
@@ -1139,31 +1113,18 @@ async def handle_list_article(event: GroupMessageCreateEvent,args: Message = Com
     elif userid not in sheet1:
         await list_article.finish(warning("该用户不在可访问列表中。", "🐦 文章列表"))
     else:
-        async with (get_session() as db_session):
-            plantform = await UserManager.get_Sign_by_student_id(db_session, userid)
-            plantform = plantform.Plantform
-            plantform_name = await PlantformManager.get_Sign_by_student_id(db_session, plantform)
-            url = plantform_name.url
-            if_need_trans = int(plantform_name.need_trans)
-            feed_url = f"{config.rsshub_host}{url}{userid}"
-            user = await User_name_get(userid)
-            username = user.User_Name
-
-            # 获取数据
-            data = await fetch_feed(feed_url)
-            if "error" in data:
-                await list_article.finish(error(data["error"], "🐦 文章列表"))
-
-            if not data.get("entries"):
-                await list_article.finish(info("该用户暂无动态，或用户不存在。", "🐦 文章列表"))
-
-            entries = []
-            num = len(data.get("entries"))
-            for i in range(0,num):
-                latest = data.get("entries")[i]
-                entries.append(f"{i}. {latest.title}")
-
-            await list_article.finish(quoted_card(f"🐦 @{username} 的动态列表", "\n".join(entries)))
+        async with get_session() as db_session:
+            user = await UserManager.get_Sign_by_student_id(db_session, userid)
+            platform = await PlantformManager.get_Sign_by_student_id(db_session, user.Plantform)
+            username, route, platform_name = user.User_Name, platform.url, platform.name
+        try:
+            data = await R._fetch_user_feed(userid, route, platform_name)
+        except FeedUnavailable:
+            await list_article.finish(error("所有 RSSHub 源请求失败，请稍后重试。", "🐦 文章列表"))
+        if not data.get("entries"):
+            await list_article.finish(info("该用户暂无动态，或用户不存在。", "🐦 文章列表"))
+        entries = [f"{index}. {entry.title}" for index, entry in enumerate(data.entries)]
+        await list_article.finish(quoted_card(f"🐦 @{username} 的动态列表", "\n".join(entries)))
 
 def _group_settings_text(group_id: str, group_settings=None) -> str:
     settings = _parse_group_config(group_settings)
@@ -1382,72 +1343,155 @@ async def signal_on_():
         "📡 RSS 首轮检查",
     ))
 
+_collection_lock = asyncio.Lock()
 _refresh_lock = asyncio.Lock()
+_delivery_cache = {}
+_source_notice_lock = asyncio.Lock()
+_rss_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def refresh_article():
-    # 手动刷新与定时刷新共用锁，避免同一批文章被同时发送。
+    """手动刷新全部账号后尝试推送；不受自动推送休息时段限制。"""
+    await collect_articles()
+    await push_cached_articles()
+
+
+async def collect_articles():
+    # 采集和推送使用不同的锁；QQ 图片重试不会阻塞后续采集。
+    async with _collection_lock:
+        async with get_session() as session:
+            rows = await session.execute(select(
+                User.User_ID, User.User_Name, Plantform.url, Plantform.name,
+            ).outerjoin(Plantform, User.Plantform == Plantform.name).order_by(User.User_ID))
+            accounts = [tuple(row) for row in rows if row[0]]
+        if not accounts:
+            logger.info("当前账户列表为空")
+            return
+        twitter_paused = False
+        if any(is_twitter_account(platform, route) for _, _, route, platform in accounts):
+            try:
+                async with get_session() as session:
+                    retry_at = await SourceHealthManager.retry_at(session)
+                twitter_paused = retry_at is not None and retry_at > utc_now()
+            except SQLAlchemyError as exc:
+                logger.warning(f"Twitter 退避状态读取失败，继续本轮采集：{type(exc).__name__}")
+        attempted = 0
+        twitter_ok = False
+        twitter_failed = False
+        twitter_streak = 0
+        twitter_retry_after = 0
+        for userid, username, route, platform_name in accounts:
+            twitter = is_twitter_account(platform_name, route)
+            if not route:
+                logger.warning(f"账号 {userid} 的平台配置不存在，跳过")
+                continue
+            if twitter and twitter_paused:
+                continue
+            if attempted:
+                await asyncio.sleep(random.uniform(5, 15))
+            attempted += 1
+            try:
+                logger.info(f"开始采集账号 {userid} 的 RSS")
+                collected = await R.collect_rss(userid, account=(username, route, platform_name))
+                if twitter and collected:
+                    twitter_streak = 0
+                    if not twitter_ok:
+                        await _observe_twitter(True)
+                    twitter_ok = True
+            except FeedUnavailable as exc:
+                if twitter:
+                    twitter_failed |= exc.global_failure
+                    twitter_retry_after = max(twitter_retry_after, exc.retry_after)
+                    twitter_streak = twitter_streak + 1 if exc.global_failure else 0
+                    if exc.rate_limited or twitter_streak >= config.rss_twitter_failure_threshold:
+                        cooldown = max(config.rss_twitter_cooldown, twitter_retry_after)
+                        twitter_paused = True
+                        await _observe_twitter(False, cooldown=cooldown)
+                        logger.warning(f"Twitter 采集暂停，至少 {cooldown} 秒后在下一轮探测")
+            except Exception as exc:
+                logger.opt(exception=False).error(f"采集账号 {userid} 失败，不影响其他账号：{exc}")
+        if twitter_failed and not twitter_ok and not twitter_paused:
+            await _observe_twitter(False, cooldown=max(config.rss_twitter_cooldown, twitter_retry_after))
+        logger.info(f"本轮全账户 RSS 采集结束，共请求 {attempted}/{len(accounts)} 个账号")
+
+
+async def _observe_twitter(available, *, cooldown=0):
+    try:
+        async with get_session() as session, session.begin():
+            changed = await SourceHealthManager.observe(
+                session, available, notify=bool(config.ut_url), cooldown=cooldown,
+            )
+    except SQLAlchemyError as exc:
+        logger.warning(f"Twitter 状态持久化失败，不阻断其他账号：{type(exc).__name__}")
+        return
+    if changed:
+        logger.info("Twitter 上线：采集链路恢复" if available else "Twitter 下线：采集链路不可用")
+
+
+async def push_cached_articles():
     async with _refresh_lock:
-        await _refresh_article()
-
-
-async def _refresh_article():
-    """
-    定时刷新推送推文用函数
-    """
-    async with (get_session() as db_session):
         try:
-            flag = await SubscribeManager.is_database_empty(db_session)
+            if not get_bot():
+                return
+        except ValueError:
+            logger.info("QQ 未在线，缓存推送等待连接恢复")
+            return
+        await _push_cached_articles()
+
+
+async def _push_cached_articles():
+    """按群订阅投递本进程已刷新过的账号快照。"""
+    try:
+        async with get_session() as db_session:
             sub_list = {}
-            if flag:
+            for sub in await SubscribeManager.get_all_subscriptions(db_session):
+                sub_list.setdefault(sub.username, []).append(str(sub.group))
+            for userid in set(_delivery_cache) - sub_list.keys():
+                _delivery_cache.pop(userid, None)
+            if not sub_list:
                 logger.info("当前无订阅")
-            else:
-                all_subscriptions = await SubscribeManager.get_all_subscriptions(db_session)
-
-                for sub in all_subscriptions:
-                    username = sub.username
-                    group = str(sub.group)
-                    if username not in sub_list:
-                        sub_list[username] = []
-                    sub_list[username].append(group)
-                logger.success(f"{datetime.now()} 已获取所有订阅信息")
-
-                silent_groups = set()
-                if config.if_first_time_start:
-                    cutoff = datetime.now() - timedelta(minutes=20)
-                    for group_id in {group for groups in sub_list.values() for group in groups}:
-                        last_sent = await DetailManager.last_successful_delivery_at(db_session, group_id)
-                        if last_sent is None or last_sent < cutoff:
-                            silent_groups.add(group_id)
-                        action = "静默登记历史文章" if group_id in silent_groups else "正常推送"
-                        logger.info(f"启动首轮：群 {group_id} 上次成功推送 {last_sent or '无记录'}，{action}")
-
-                await DetailManager.bootstrap_legacy_subscriptions(db_session, [
-                    (user_id, group_id)
-                    for user_id, groups in sub_list.items() for group_id in groups
-                ], silent_groups=silent_groups)
-
-                # 预加载所有群组配置
-                group_configs = await GroupconfigManager.get_all_configs(db_session)
-                logger.info(f"已预加载 {len(group_configs)} 个群组配置")
-
-                accounts = list(sub_list.items())
-                for index, (user, groups) in enumerate(accounts):
-                    try:
-                        logger.info(f"{datetime.now()} 开始处理对 {user} 的订阅")
-                        # 同一账号的目标群在 handle_rss 内并行，账号之间顺序处理。
-                        await R.handle_rss(userid=user, group_id_list=groups, group_configs=group_configs)
-                    except Exception as exc:
-                        logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {exc}")
-                    if index < len(accounts) - 1:
-                        await asyncio.sleep(random.uniform(5, 15))
-
-            await rss_get().change_config()
-            logger.info(f"config.if_first_time_start：{await rss_get().get_signal()}")
-
-            logger.info(f"{datetime.now()} 订阅处理完毕")
-        except SQLAlchemyError as e:
-            logger.opt(exception=False).error(f"数据库操作错误: {e}")
+                await R.change_config()
+                return
+            # 重启后等待账号首次有效采集，不能用旧窗口消耗启动静默状态。
+            fresh_accounts = dict((await db_session.execute(select(
+                RSSFeedCache.account_id, RSSFeedCache.digest,
+            ).where(RSSFeedCache.account_id.in_(sub_list), RSSFeedCache.collected_at >= _rss_started_at))).all())
+            if not fresh_accounts:
+                return
+            silent_groups = set()
+            if config.if_first_time_start:
+                _delivery_cache.clear()
+                cutoff = datetime.now() - timedelta(minutes=20)
+                for group_id in {group for groups in sub_list.values() for group in groups}:
+                    last_sent = await DetailManager.last_successful_delivery_at(db_session, group_id)
+                    if last_sent is None or last_sent < cutoff:
+                        silent_groups.add(group_id)
+            await DetailManager.bootstrap_legacy_subscriptions(db_session, [
+                (user_id, group_id) for user_id, groups in sub_list.items() for group_id in groups
+            ], silent_groups=silent_groups)
+            group_configs = await GroupconfigManager.get_all_configs(db_session)
+            work = []
+            for user, groups in sub_list.items():
+                if user not in fresh_accounts:
+                    continue
+                key = (fresh_accounts[user], tuple(
+                    (group, tuple(sorted(_parse_group_config(group_configs.get(group)).items())))
+                    for group in sorted(set(groups))
+                ))
+                if _delivery_cache.get(user) != key:
+                    work.append((user, groups, key))
+        # QQ 发送、翻译和账号等待期间不占用外层数据库连接。
+        for index, (user, groups, key) in enumerate(work):
+            try:
+                if await R.send_cached_rss(userid=user, group_id_list=groups, group_configs=group_configs):
+                    _delivery_cache[user] = key
+            except Exception as exc:
+                logger.opt(exception=False).error(f"对于{user}的订阅时发生错误: {exc}")
+            if index < len(work) - 1:
+                await asyncio.sleep(random.uniform(5, 15))
+        await R.change_config()
+    except SQLAlchemyError as exc:
+        logger.opt(exception=False).error(f"数据库操作错误: {exc}")
 
 
 refresh = on_command("refresh", priority=10, rule=superuser_group_rule)
@@ -1606,28 +1650,14 @@ async def weekly_cleanup_orphan():
         logger.opt(exception=True).error(f"定时清理失效订阅失败: {e}")
 
 
-@scheduler.scheduled_job('interval',minutes=config.refresh_time,misfire_grace_time=60)
+@scheduler.scheduled_job('interval',minutes=config.refresh_time,misfire_grace_time=60,next_run_time=datetime.now(timezone.utc))
 async def auto_update_func():
-    """
-    定时任务，检查更新并向订阅群组发送推文
-    """
+    """全天刷新账户列表；群订阅、QQ 连接和推送休息时段不限制采集。"""
     start_time = datetime.now()
     logger.info(f"任务开始: {start_time}")
 
     try:
-        # 1. 尝试获取 bot
-        bot = get_bot()
-        if not bot:
-            logger.error("未能获取到有效的 bot 实例")
-            return
-
-        # 2. 检查时间段
-        if is_current_time_in_period("02:00", "08:00"):
-            logger.info("当前为休息时间，跳过本次任务")
-            return
-
-        # 3. 执行核心刷新任务
-        await refresh_article()
+        await collect_articles()
 
     except Exception as e:
         logger.exception(f"定时任务运行异常: {e}")
@@ -1635,6 +1665,43 @@ async def auto_update_func():
         # 无论成功还是失败，最后记录耗时
         end_time = datetime.now()
         logger.info(f"任务结束，总耗时: {end_time - start_time}")
+
+
+@scheduler.scheduled_job('interval',seconds=config.rss_push_interval,misfire_grace_time=60)
+async def auto_push_func():
+    """QQ 推送独立检查数据库，保留北京时间的夜间休息规则。"""
+    if is_current_time_in_period("02:00", "08:00"):
+        return
+    try:
+        await push_cached_articles()
+    except Exception as exc:
+        logger.exception(f"缓存推送任务运行异常: {exc}")
+
+
+@scheduler.scheduled_job('interval', seconds=60, misfire_grace_time=60)
+async def auto_source_status_func():
+    """独立上报 Twitter 状态到 Kuma；HTTP 或业务确认失败均保留重试。"""
+    if not config.ut_url:
+        return
+    async with _source_notice_lock:
+        try:
+            async with get_session() as session:
+                pending = await SourceHealthManager.pending(session)
+            for notice_id, available, observed_at in pending:
+                await R.report_status(config.ut_url, available=available, observed_at=observed_at)
+                async with get_session() as session, session.begin():
+                    await SourceHealthManager.acknowledge(session, notice_id, observed_at)
+        except Exception as exc:
+            logger.opt(exception=False).warning(f"Twitter 状态未获 Uptime Kuma 确认，保留重试：{type(exc).__name__}")
+
+
+@scheduler.scheduled_job('interval', seconds=config.rss_ingest_retry_interval, misfire_grace_time=60)
+async def auto_ingest_retry_func():
+    """全天补偿入库，存储故障后保留队列等待下一次调度。"""
+    try:
+        await retry_pending_entries(limit=config.rss_ingest_retry_batch)
+    except Exception as exc:
+        logger.opt(exception=False).error(f"文章入库补偿暂未完成，队列保留：{type(exc).__name__}")
 
 
 group_removed = on_type(GroupDelRobotEvent, priority=10, block=False)

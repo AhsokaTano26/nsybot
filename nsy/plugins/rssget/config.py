@@ -20,11 +20,19 @@ class Config(BaseModel):
     secret_key: str | None = None
     model_name: str | None = None
 
-    # 可用性监控配置
+    # Twitter 采集的 Uptime Kuma Push URL；通知渠道在 Kuma 中配置。
     ut_url: str | None = None
 
     # 更新时间配置
     refresh_time: int = Field(default=20, gt=0)
+    # 采集与 QQ 推送独立调度；推送只读最近一次有效 RSS 快照。
+    rss_push_interval: int = Field(default=60, gt=0)
+    rss_ingest_retry_interval: int = Field(default=60, gt=0, le=3600)
+    rss_ingest_retry_batch: int = Field(default=100, gt=0, le=1000)
+    rss_fetch_retry_base: float = Field(default=2, gt=0, le=30)
+    # 全部 RSSHub 失败时跨账号退避，防止连续请求扩大上游限流。
+    rss_twitter_cooldown: int = Field(default=900, gt=0, le=86400)
+    rss_twitter_failure_threshold: int = Field(default=3, gt=0, le=20)
 
     # 复用 NoneBot HTTP 服务；默认关闭，启用必须配置独立 Token。
     rss_image_sync_enabled: bool = False

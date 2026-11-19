@@ -1,15 +1,24 @@
 import ast
+import asyncio
+import json
+
+import feedparser
 
 from nonebot.log import logger
 from nonebot_plugin_orm import get_session
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm.exc import StaleDataError
 
-from .models import Content, ImageSync
+from .models import Content, ImageSync, RSSIngestQueue
 from .models_method import ContentManager
+from .ingest_queue import IngestQueueManager
+
+_ingest_lock = asyncio.Lock()
+_stage_lock = asyncio.Lock()
 
 
-async def update_text(dic):
+async def update_text(dic, *, pending_version=None):
     """缓存尽力写入；缓存失败不阻断当前原文推送。"""
     images = list(dict.fromkeys(dic.get("images") or []))
     values = {key: dic.get(key) for key in (
@@ -19,6 +28,13 @@ async def update_text(dic):
     for attempt in range(2):
         try:
             async with get_session() as session:
+                if pending_version is not None:
+                    # 先按版本确认并取得写锁；后续任一写入失败会连同确认一起回滚。
+                    claimed = await session.execute(delete(RSSIngestQueue).where(
+                        RSSIngestQueue.id == dic["id"], RSSIngestQueue.version == pending_version,
+                    ))
+                    if not claimed.rowcount:
+                        return True  # 已由其他写入完成，或原始条目已更新，不能写入旧版本。
                 existing = await ContentManager.get_Sign_by_student_id(session, dic["id"])
                 if existing is None:
                     session.add(Content(id=dic["id"], **values))
@@ -80,21 +96,78 @@ async def get_text(id) -> dict[str, str]:
 
 
 async def cache_entries(entries_info, username: str) -> None:
-    """按群订阅抓取，但完整缓存本轮条目；翻译留给实际推送。"""
+    """批量检查已缓存条目；不重复读取正文，翻译留给实际推送。"""
+    # 新响应先落队列，不能在旧补偿任务后面等待到原始数据仍只留在内存。
+    async with _stage_lock:
+        missing_ids = await _stage_entries(entries_info, username)
+    if missing_ids:
+        async with _ingest_lock:
+            for offset in range(0, len(missing_ids), 400):
+                ids = missing_ids[offset:offset + 400]
+                await _retry_pending_entries(limit=len(ids), ids=ids)
+
+
+async def _stage_entries(entries_info, username):
+    cached_ids = set()
+    ids = list(dict.fromkeys(article_id for _, article_id in entries_info))
+    try:
+        async with get_session() as session:
+            for offset in range(0, len(ids), 400):
+                rows = await session.execute(select(Content.id, Content.image_num, Content.images).where(
+                    Content.id.in_(ids[offset:offset + 400]),
+                ))
+                for article_id, image_num, raw_images in rows:
+                    try:
+                        if int(image_num) != 0:
+                            images = ast.literal_eval(raw_images)
+                            if not isinstance(images, list) or not all(isinstance(url, str) for url in images):
+                                continue
+                        cached_ids.add(article_id)
+                    except (ValueError, SyntaxError, TypeError):
+                        pass
+    except SQLAlchemyError as exc:
+        logger.error(f"检查文章缓存失败，尚未接受本轮条目：{type(exc).__name__}")
+        raise
+
+    missing = [(entry, article_id) for entry, article_id in entries_info if article_id not in cached_ids]
+    if not missing:
+        return []
+    # 必须先持久化再格式化/入库；队列无法提交时明确失败，不更新账号快照。
+    for attempt in range(3):
+        try:
+            async with get_session() as session, session.begin():
+                await IngestQueueManager.stage(session, missing, username)
+            break
+        except (IntegrityError, StaleDataError):
+            if attempt == 2:
+                raise
+    return [article_id for _, article_id in missing]
+
+
+async def retry_pending_entries(limit=100):
+    """不依赖 RSS 窗口或 QQ，按到期时间补写已持久化的原始条目。"""
+    async with _ingest_lock:
+        await _retry_pending_entries(limit=limit)
+
+
+async def _retry_pending_entries(*, limit, ids=None):
     from .format_json import Format
 
-    for entry, article_id in entries_info:
+    async with get_session() as session:
+        pending = await IngestQueueManager.due(session, limit, ids)
+    for item in pending:
         try:
-            try:
-                cached = await get_text(article_id)
-            except (ValueError, SyntaxError, TypeError, AttributeError):
-                cached = None
-            if cached is None:
-                content = await Format().extract_content(entry, 0)
-                content.update(id=article_id, username=username)
-                await update_text(content)
-        except (SQLAlchemyError, ValueError, TypeError, AttributeError) as exc:
-            logger.warning(f"文章 {article_id} 全量缓存失败，将在下轮重试：{type(exc).__name__}")
+            entry = json.loads(item["entry"], object_hook=feedparser.FeedParserDict)
+            content = await Format().extract_content(entry, 0)
+            content.update(id=item["id"], username=item["username"])
+            if await update_text(content, pending_version=item["version"]):
+                continue
+            error = "DatabaseWriteError"
+        except Exception as exc:
+            error = type(exc).__name__
+        async with get_session() as session, session.begin():
+            await IngestQueueManager.failed(session, item, error)
+        logger.warning(f"文章 {item['id']} 入库失败，保留补偿队列：{error}")
 
 
 async def cache_feed(entries, username: str) -> None:

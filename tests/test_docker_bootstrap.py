@@ -47,6 +47,8 @@ class DockerBootstrapTests(unittest.TestCase):
                 "LOCALSTORE_DATA_DIR": directory, "LOCALSTORE_CACHE_DIR": directory,
                 "LOCALSTORE_CONFIG_DIR": directory, "ALEMBIC_STARTUP_CHECK": "false",
                 "RSS_IMAGE_SYNC_ENABLED": "true", "RSS_IMAGE_SYNC_TOKEN": "bootstrap-test-token",
+                "APSCHEDULER_CONFIG": '{"apscheduler.timezone":"America/New_York"}',
+                "RSS_PUSH_INTERVAL": "17",
             })
             result = subprocess.run(
                 [sys.executable, "-c", (
@@ -54,6 +56,13 @@ class DockerBootstrapTests(unittest.TestCase):
                     "from docker._main import app\n"
                     "assert callable(app)\n"
                     "assert nonebot.get_plugin('rssget') is not None\n"
+                    "import time\n"
+                    "rss = nonebot.get_plugin('rssget').module\n"
+                    "collect = [j for j in rss.scheduler.get_jobs() if j.func == rss.auto_update_func]\n"
+                    "push = [j for j in rss.scheduler.get_jobs() if j.func == rss.auto_push_func]\n"
+                    "assert len(collect) == len(push) == 1\n"
+                    "assert abs(collect[0].next_run_time.timestamp() - time.time()) < 30, '启动采集不能受调度器时区影响'\n"
+                    "assert push[0].trigger.interval.total_seconds() == 17\n"
                     "import asyncio, httpx\n"
                     "async def check_auth():\n"
                     "    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://internal') as client:\n"

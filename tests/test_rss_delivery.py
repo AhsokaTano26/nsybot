@@ -4,14 +4,16 @@ import tempfile
 import unittest
 import importlib
 import asyncio
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
 import feedparser
+import httpx
 from nonebot.adapters.qq import GroupMessageCreateEvent, Message
 from nonebot.exception import FinishedException
-from sqlalchemy import select
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from rss_test_support import load_rss_plugin
@@ -59,6 +61,8 @@ class RSSDeliveryTests(unittest.IsolatedAsyncioTestCase):
         update_text = importlib.import_module("nsy.plugins.rssget.update_text")
 
         self.functions = functions
+        self.real_fetch_feed = functions.fetch_feed
+        self.real_report_status = functions.rss_get.report_status
         self.models = models
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{self.test_root.name}/{uuid4().hex}.sqlite3")
         self.addAsyncCleanup(self.engine.dispose)
@@ -73,10 +77,15 @@ class RSSDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.patches = [
             patch.object(qq_utils, "active_message_limiter", qq_utils.ActiveMessageLimiter(0, 0)),
             patch.object(self.rss, "_refresh_lock", asyncio.Lock()),
+            patch.object(self.rss, "_collection_lock", asyncio.Lock()),
+            patch.object(self.rss, "_delivery_cache", {}, create=True),
+            patch.object(self.rss, "_source_notice_lock", asyncio.Lock(), create=True),
             patch.object(functions, "_msg_semaphore", asyncio.Semaphore(3)),
             patch.object(self.rss, "get_session", self.sessions),
             patch.object(functions, "get_session", self.sessions),
             patch.object(update_text, "get_session", self.sessions),
+            patch.object(update_text, "_ingest_lock", asyncio.Lock(), create=True),
+            patch.object(update_text, "_stage_lock", asyncio.Lock(), create=True),
             patch.object(self.rss, "get_bot", return_value=self.bot),
             patch.object(functions, "get_bot", return_value=self.bot),
             patch.object(functions, "fetch_feed", AsyncMock(side_effect=lambda _: self.feed)),
@@ -131,6 +140,9 @@ class RSSDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def run_scheduled(self):
         jobs = [job for job in self.rss.scheduler.get_jobs() if job.func == self.rss.auto_update_func]
         self.assertEqual(len(jobs), 1, "RSS 定时任务应注册一次")
+        await jobs[0].func()
+        jobs = [job for job in self.rss.scheduler.get_jobs() if job.func == self.rss.auto_push_func]
+        self.assertEqual(len(jobs), 1, "缓存推送任务应注册一次")
         await jobs[0].func()
 
     async def details(self):
@@ -728,10 +740,11 @@ class RSSDeliveryTests(unittest.IsolatedAsyncioTestCase):
         async def wait_gap(seconds):
             events.append(("gap", seconds))
 
-        with patch.object(self.rss.R, "handle_rss", process_account), patch.object(
+        await self.rss.auto_update_func()
+        with patch.object(self.rss.R, "send_cached_rss", process_account), patch.object(
             self.functions.asyncio, "sleep", wait_gap,
         ), patch.object(self.functions.random, "uniform", return_value=9) as choose_gap:
-            await self.run_scheduled()
+            await self.rss.auto_push_func()
         self.assertEqual([call.args for call in choose_gap.call_args_list], [(5, 15)])
         self.assertEqual(events, [
             ("start", "account"), ("done", "account"), ("gap", 9),
@@ -845,6 +858,785 @@ class RSSDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({row.link for row in cached}, {"https://example.com/post-1", "https://example.com/older"})
         self.assertIn("旧正文", next(row.text for row in cached if row.link.endswith("older")))
         self.assertEqual(self.bot.sent, [])
+
+    async def test_account_without_group_subscription_is_collected(self):
+        await self.seed(groups=())
+        self.feed.entries[0]["summary"] += '<img src="https://example.com/unsubscribed.jpg">'
+        await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertEqual(len(cached), 1)
+        self.assertIn("unsubscribed.jpg", cached[0].images)
+        self.assertEqual(self.bot.sent, [])
+        self.assertEqual(await self.details(), [])
+
+    async def test_collection_includes_unsubscribed_accounts_and_fetches_each_once(self):
+        await self.seed(("group-a", "group-b"))
+        async with self.sessions.begin() as session:
+            session.add(self.models.User(User_ID="no-group", User_Name="无订阅", Plantform="test"))
+        feeds = {"account": self.feed, "no-group": feedparser.parse(RSS_FEED.replace("post-1", "other-post"))}
+        with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=lambda url: feeds[url.rsplit("/", 1)[-1]])) as fetch:
+            await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertEqual({row.username for row in cached}, {"测试", "无订阅"})
+        self.assertEqual(fetch.await_count, 2)
+        self.assertEqual(self.bot.sent, [], "采集任务不能夹带 QQ 发送")
+
+    async def test_collection_continues_offline_and_at_night_without_consuming_startup_flag(self):
+        await self.seed()
+        with patch.object(self.rss, "get_bot", side_effect=ValueError("offline")), patch.object(
+            self.rss, "is_current_time_in_period", return_value=True,
+        ), patch.object(self.functions.config, "if_first_time_start", True):
+            await self.rss.auto_update_func()
+            async with self.sessions() as session:
+                cached = list((await session.scalars(select(self.models.Content))).all())
+            self.assertEqual(len(cached), 1)
+            self.assertTrue(self.functions.config.if_first_time_start)
+        self.assertEqual(await self.details(), [])
+
+    async def test_delivery_reads_collected_snapshot_without_refetching(self):
+        await self.seed()
+        await self.rss.R.handle_rss("account", [])
+        push = getattr(self.rss, "auto_push_func", None)
+        self.assertTrue(callable(push), "需要独立的缓存推送任务")
+        with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=AssertionError("推送不得抓 RSS"))):
+            await push()
+            await push()
+        self.assertEqual([group for group, _ in self.bot.sent], ["group-a"])
+
+    async def test_manual_rss_uses_source_retries_and_backup_without_holding_connection(self):
+        await self.seed()
+        event_value = GroupMessageCreateEvent.model_validate({
+            "id": "message", "timestamp": "2026-10-25T12:00:00+00:00",
+            "content": "rss account", "group_id": "group-a", "group_openid": "group-a",
+            "author": {"id": "member", "member_openid": "member", "bot": False, "member_role": "member"},
+        })
+        requests, leases, sent = [], [], []
+
+        def respond(request):
+            requests.append(request.url.host)
+            leases.append(self.engine.pool.checkedout())
+            return httpx.Response(503) if request.url.host == "primary.invalid" else httpx.Response(200, text=RSS_FEED)
+
+        async def finish(message):
+            raise FinishedException
+
+        async def send_article(group, content, translation):
+            sent.append(content["link"])
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            with patch.object(self.functions.NetworkManager, "get_client", return_value=client), patch.object(
+                self.functions.config, "rsshub_host", "https://primary.invalid",
+            ), patch.object(self.functions.config, "rsshub_host_back", ["https://backup.invalid"]), patch.object(
+                self.functions, "fetch_feed", self.real_fetch_feed,
+            ), patch.object(self.rss, "fetch_feed", self.real_fetch_feed), patch.object(
+                self.rss, "_send_rss_article", send_article,
+            ), patch.object(self.rss.rss_cmd, "finish", finish):
+                try:
+                    await self.rss.handle_rss_cmd(event_value, Message("account"))
+                except FinishedException:
+                    pass
+        self.assertEqual(requests, ["primary.invalid"] * 4 + ["backup.invalid"])
+        self.assertEqual(leases, [0] * 5, "手动查询在重试等待和HTTP期间也不能持有数据库连接")
+        self.assertEqual(sent, ["https://example.com/post-1"])
+
+    async def test_slow_delivery_does_not_block_collection_of_new_posts(self):
+        await self.seed()
+        await self.rss.R.handle_rss("account", [])
+        push = getattr(self.rss, "auto_push_func", None)
+        self.assertTrue(callable(push), "需要独立的缓存推送任务")
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def slow_send():
+            entered.set()
+            await release.wait()
+
+        self.bot.before_send = slow_send
+        sending = asyncio.create_task(push())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            self.feed = feedparser.parse(RSS_FEED.replace("post-1", "post-2"))
+            await asyncio.wait_for(self.rss.auto_update_func(), 1)
+            async with self.sessions() as session:
+                cached = list((await session.scalars(select(self.models.Content))).all())
+            self.assertEqual({row.link for row in cached}, {"https://example.com/post-1", "https://example.com/post-2"})
+        finally:
+            release.set()
+            await sending
+
+    async def test_night_collection_does_not_consume_first_push_baseline(self):
+        await self.seed()
+        self.functions.config.if_first_time_start = True
+        await self.rss.auto_update_func()
+        with patch.object(self.rss, "is_current_time_in_period", return_value=True):
+            await self.rss.auto_push_func()
+        self.assertEqual(self.bot.sent, [])
+        self.assertEqual(await self.details(), [])
+        self.assertTrue(self.functions.config.if_first_time_start)
+        await self.rss.auto_push_func()
+        self.assertEqual(self.bot.sent, [])
+        self.assertFalse(self.functions.config.if_first_time_start)
+        self.feed = feedparser.parse(RSS_FEED.replace("post-1", "post-2"))
+        await self.run_scheduled()
+        self.assertEqual(len(self.bot.sent), 1)
+
+    async def test_restart_waits_for_fresh_snapshot_before_initializing_groups(self):
+        await self.seed()
+        await self.rss.R.collect_rss("account")
+        async with self.sessions.begin() as session:
+            snapshot = await session.get(self.models.RSSFeedCache, "account")
+            snapshot.collected_at = self.rss._rss_started_at - timedelta(seconds=1)
+        self.functions.config.if_first_time_start = True
+        await self.rss.auto_push_func()
+        self.assertEqual(await self.details(), [])
+        self.assertTrue(self.functions.config.if_first_time_start)
+        await self.run_scheduled()
+        self.assertEqual(self.bot.sent, [])
+        self.assertFalse(self.functions.config.if_first_time_start)
+
+    async def test_failed_collection_keeps_last_valid_snapshot_for_delivery(self):
+        await self.seed()
+        await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            cached = await session.get(self.models.RSSFeedCache, "account")
+            before = (cached.entries, cached.collected_at)
+        self.feed = {"entries": [], "error": "fetch failed"}
+        await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            cached = await session.get(self.models.RSSFeedCache, "account")
+            self.assertEqual((cached.entries, cached.collected_at), before)
+        await self.rss.auto_push_func()
+        self.assertEqual(len(self.bot.sent), 1)
+
+    async def test_one_broken_feed_does_not_stop_other_accounts(self):
+        await self.seed(groups=())
+        async with self.sessions.begin() as session:
+            session.add(self.models.User(User_ID="other", User_Name="正常账号", Plantform="test"))
+
+        def respond(url):
+            return self.feed if url.endswith("/other") else {"entries": [], "error": "failed"}
+
+        with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=respond)):
+            await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertEqual([row.username for row in cached], ["正常账号"])
+
+    async def test_cached_snapshot_preserves_quote_filtering(self):
+        await self.seed()
+        async with self.sessions.begin() as session:
+            (await session.get(self.models.Groupconfig, "group-a")).if_need_trans = False
+        self.feed.entries[0]["description"] = '<div class="rsshub-quote">引用正文</div>自己的正文'
+        await self.run_scheduled()
+        self.assertEqual(self.bot.sent, [], "快照存取不能让引用推文绕过群转发开关")
+        self.assertEqual(len(await self.details()), 1)
+
+    async def test_cached_articles_are_checked_in_batches_without_per_article_reads(self):
+        cache = importlib.import_module("nsy.plugins.rssget.update_text")
+        async with self.sessions.begin() as session:
+            session.add_all(self.models.Content(id=f"cached-{i}", image_num="0", text="x" * 8192)
+                            for i in range(200))
+        selects = []
+
+        def count(connection, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith("SELECT"):
+                selects.append(statement)
+
+        event.listen(self.engine.sync_engine, "before_cursor_execute", count)
+        try:
+            await cache.cache_entries([({"title": "unchanged"}, f"cached-{i}") for i in range(200)], "作者")
+        finally:
+            event.remove(self.engine.sync_engine, "before_cursor_execute", count)
+        self.assertLessEqual(len(selects), 2, "200 篇命中缓存不能逐篇读取正文")
+
+    async def retry_ingest(self):
+        worker = getattr(self.rss, "auto_ingest_retry_func", None)
+        self.assertTrue(callable(worker), "需要独立的持久化入库补偿任务")
+        await worker()
+
+    async def make_ingest_due(self):
+        async with self.sessions.begin() as session:
+            for row in await session.scalars(select(self.models.RSSIngestQueue)):
+                row.next_retry_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+
+    async def test_failed_ingest_survives_new_feed_window_and_worker_restart(self):
+        await self.seed(groups=())
+        self.feed = feedparser.parse(RSS_FEED.replace('</item>',
+            '<enclosure url="https://example.com/original.jpg" type="image/jpeg" /></item>'))
+        async with self.sessions.begin() as session:
+            await session.execute(text('CREATE TRIGGER reject_old BEFORE INSERT ON "Content" '
+                "WHEN NEW.link='https://example.com/post-1' BEGIN SELECT RAISE(FAIL, 'simulated DB failure'); END"))
+        await self.rss.auto_update_func()
+        queue_model = getattr(self.models, "RSSIngestQueue", None)
+        self.assertIsNotNone(queue_model, "失败文章必须持久保留原始 RSS 条目")
+        async with self.sessions() as session:
+            pending = list(await session.scalars(select(queue_model)))
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0].attempts, 1)
+            self.assertIn("original.jpg", pending[0].entry)
+        self.feed = feedparser.parse(RSS_FEED.replace("post-1", "post-2"))
+        await self.rss.auto_update_func()
+        await self.engine.dispose()
+        async with self.sessions.begin() as session:
+            await session.execute(text("DROP TRIGGER reject_old"))
+        await self.make_ingest_due()
+        with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=AssertionError("补偿不能重新抓RSS"))):
+            await self.retry_ingest()
+            await self.retry_ingest()
+        async with self.sessions() as session:
+            articles = list(await session.scalars(select(self.models.Content)))
+            self.assertEqual({row.link for row in articles}, {"https://example.com/post-1", "https://example.com/post-2"})
+            self.assertIn("original.jpg", next(row.images for row in articles if row.link.endswith("post-1")))
+            self.assertEqual(len(list(await session.scalars(select(self.models.ImageSync)))), 1)
+            self.assertEqual(list(await session.scalars(select(queue_model))), [])
+        self.assertEqual(self.bot.sent, [])
+        self.assertEqual(await self.details(), [])
+
+    async def test_ingest_format_failure_is_queued_and_same_feed_keeps_backoff(self):
+        from nsy.plugins.rssget.format_json import Format
+
+        await self.seed(groups=())
+        with patch.object(Format, "extract_content", AsyncMock(side_effect=ValueError("bad article"))):
+            await self.rss.auto_update_func()
+        queue_model = getattr(self.models, "RSSIngestQueue", None)
+        self.assertIsNotNone(queue_model, "正文解析失败也必须持久化")
+        async with self.sessions() as session:
+            row = await session.scalar(select(queue_model))
+            before = row.attempts, row.next_retry_at, row.last_error
+        await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            row = await session.scalar(select(queue_model))
+            self.assertEqual((row.attempts, row.next_retry_at, row.last_error), before)
+            self.assertEqual(list(await session.scalars(select(self.models.Content))), [])
+        await self.make_ingest_due()
+        await self.retry_ingest()
+        async with self.sessions() as session:
+            self.assertEqual(list(await session.scalars(select(queue_model))), [])
+            self.assertEqual(len(list(await session.scalars(select(self.models.Content)))), 1)
+
+    async def test_ingest_cancel_after_staging_leaves_durable_work(self):
+        from nsy.plugins.rssget.format_json import Format
+
+        await self.seed(groups=())
+        with patch.object(Format, "extract_content", AsyncMock(side_effect=asyncio.CancelledError)):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.rss.R.collect_rss("account")
+        queue_model = getattr(self.models, "RSSIngestQueue", None)
+        self.assertIsNotNone(queue_model)
+        async with self.sessions() as session:
+            row = await session.scalar(select(queue_model))
+            self.assertEqual(row.attempts, 0)
+        await self.retry_ingest()
+        async with self.sessions() as session:
+            self.assertEqual(len(list(await session.scalars(select(self.models.Content)))), 1)
+
+    async def test_new_feed_is_staged_while_old_ingest_worker_is_busy(self):
+        from nsy.plugins.rssget.format_json import Format
+
+        await self.seed(groups=())
+        with patch.object(Format, "extract_content", AsyncMock(side_effect=asyncio.CancelledError)):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.rss.R.collect_rss("account")
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = Format.extract_content
+
+        async def slow_old(formatter, entry, translate):
+            entered.set()
+            await release.wait()
+            return await original(formatter, entry, translate)
+
+        async def wait_for_durable_new_entry():
+            while True:
+                async with self.sessions() as session:
+                    rows = list(await session.scalars(select(self.models.RSSIngestQueue)))
+                    if any("post-2" in row.entry for row in rows):
+                        return
+                await REAL_SLEEP(0.01)
+
+        with patch.object(Format, "extract_content", slow_old):
+            worker = asyncio.create_task(self.retry_ingest())
+            await asyncio.wait_for(entered.wait(), 2)
+            self.feed = feedparser.parse(RSS_FEED.replace("post-1", "post-2"))
+            collector = asyncio.create_task(self.rss.R.collect_rss("account"))
+            try:
+                try:
+                    await asyncio.wait_for(wait_for_durable_new_entry(), 2)
+                except TimeoutError:
+                    self.fail("旧任务阻塞时，新取得的RSS也必须先持久化")
+            finally:
+                collector.cancel()
+                await asyncio.gather(collector, return_exceptions=True)
+                release.set()
+                await worker
+        await self.retry_ingest()
+        async with self.sessions() as session:
+            self.assertEqual({row.link for row in await session.scalars(select(self.models.Content))},
+                {"https://example.com/post-1", "https://example.com/post-2"})
+
+    async def test_image_index_failure_rolls_back_article_and_queue_ack(self):
+        await self.seed(groups=())
+        self.feed.entries[0]["summary"] = '<img src="https://example.com/original.jpg">'
+        async with self.sessions.begin() as session:
+            await session.execute(text("CREATE TRIGGER reject_index BEFORE INSERT ON rss_image_sync "
+                                       "BEGIN SELECT RAISE(FAIL, 'simulated index failure'); END"))
+        await self.rss.auto_update_func()
+        queue_model = getattr(self.models, "RSSIngestQueue", None)
+        self.assertIsNotNone(queue_model)
+        async with self.sessions() as session:
+            self.assertEqual(list(await session.scalars(select(self.models.Content))), [])
+            self.assertEqual(list(await session.scalars(select(self.models.ImageSync))), [])
+            self.assertEqual(len(list(await session.scalars(select(queue_model)))), 1)
+        async with self.sessions.begin() as session:
+            await session.execute(text("DROP TRIGGER reject_index"))
+        await self.make_ingest_due()
+        await self.retry_ingest()
+        async with self.sessions() as session:
+            self.assertEqual(len(list(await session.scalars(select(self.models.Content)))), 1)
+            self.assertEqual(len(list(await session.scalars(select(self.models.ImageSync)))), 1)
+            self.assertEqual(list(await session.scalars(select(queue_model))), [])
+
+    async def test_ingest_queue_stage_failure_does_not_advance_snapshot(self):
+        await self.seed(groups=())
+        queue_model = getattr(self.models, "RSSIngestQueue", None)
+        self.assertIsNotNone(queue_model)
+        async with self.sessions.begin() as session:
+            await session.execute(text("CREATE TRIGGER reject_queue BEFORE INSERT ON rss_ingest_queue "
+                                       "BEGIN SELECT RAISE(FAIL, 'simulated storage unavailable'); END"))
+        from sqlalchemy.exc import SQLAlchemyError
+        with self.assertRaises(SQLAlchemyError):
+            await self.rss.R.collect_rss("account")
+        async with self.sessions() as session:
+            self.assertEqual(list(await session.scalars(select(self.models.RSSFeedCache))), [])
+            self.assertEqual(list(await session.scalars(select(self.models.Content))), [])
+
+    async def test_stale_ingest_worker_preserves_newer_payload(self):
+        from nsy.plugins.rssget.format_json import Format
+
+        await self.seed(groups=())
+        with patch.object(Format, "extract_content", AsyncMock(side_effect=asyncio.CancelledError)):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.rss.R.collect_rss("account")
+        original_extract = Format.extract_content
+
+        async def replace_before_write(formatter, entry, translate):
+            async with self.sessions.begin() as session:
+                row = await session.scalar(select(self.models.RSSIngestQueue))
+                changed = dict(entry, link="https://example.com/newer")
+                row.entry = json.dumps(changed, default=str)
+                row.version = "newer-version"
+            return await original_extract(formatter, entry, translate)
+
+        with patch.object(Format, "extract_content", replace_before_write):
+            await self.retry_ingest()
+        async with self.sessions() as session:
+            self.assertEqual(list(await session.scalars(select(self.models.Content))), [], "过时任务不能写入旧内容")
+            self.assertEqual(len(list(await session.scalars(select(self.models.RSSIngestQueue)))), 1)
+        await self.retry_ingest()
+        async with self.sessions() as session:
+            self.assertEqual((await session.scalar(select(self.models.Content))).link, "https://example.com/newer")
+            self.assertEqual(list(await session.scalars(select(self.models.RSSIngestQueue))), [])
+
+    async def test_ingest_worker_is_bounded_and_poison_article_does_not_block_others(self):
+        from nsy.plugins.rssget.format_json import Format
+
+        await self.seed(groups=())
+        self.feed.entries.extend(dict(self.feed.entries[0], id=f"extra-{i}", link=f"https://example.com/extra-{i}")
+                                 for i in range(2))
+        with patch.object(Format, "extract_content", AsyncMock(side_effect=ValueError("bad data"))):
+            await self.rss.auto_update_func()
+        queue_model = getattr(self.models, "RSSIngestQueue", None)
+        self.assertIsNotNone(queue_model)
+        await self.make_ingest_due()
+        async with self.sessions.begin() as session:
+            poison = await session.scalar(select(queue_model).order_by(queue_model.id))
+            poison.entry = "{"
+            poison.attempts = 99
+            poison.next_retry_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
+        with patch.object(self.rss.config, "rss_ingest_retry_batch", 2, create=True):
+            await self.retry_ingest()
+        async with self.sessions() as session:
+            queued = list(await session.scalars(select(queue_model)))
+            self.assertEqual(len(queued), 2, "每次最多取2条，其中一条毒数据不能阻断另一条")
+            self.assertEqual(len(list(await session.scalars(select(self.models.Content)))), 1)
+            poison = next(row for row in queued if row.entry == "{")
+            self.assertEqual(poison.attempts, 100)
+            delay = (poison.next_retry_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+            self.assertGreater(delay, 3590)
+            self.assertLessEqual(delay, 3600)
+
+    async def test_idle_delivery_skips_completed_snapshots_and_account_waits(self):
+        await self.seed()
+        async with self.sessions.begin() as session:
+            session.add(self.models.User(User_ID="other", User_Name="其他", Plantform="test"))
+            session.add(self.models.Subscribe(id="other-group-a", username="other", group="group-a"))
+        await self.run_scheduled()
+        self.functions.asyncio.sleep.reset_mock()
+        before = len(self.bot.sent)
+        await self.rss.auto_push_func()
+        self.assertEqual(len(self.bot.sent), before)
+        self.assertEqual(self.functions.asyncio.sleep.await_count, 0, "空闲推送检查不能逐账号等待")
+
+    async def test_qq_send_does_not_hold_a_database_connection(self):
+        await self.seed()
+        connections = []
+
+        async def observe():
+            connections.append(self.engine.sync_engine.pool.checkedout())
+
+        self.bot.before_send = observe
+        await self.run_scheduled()
+        self.assertEqual(connections, [0], "QQ I/O 期间必须释放外层数据库会话")
+
+    async def test_identical_collection_does_not_invalidate_completed_delivery(self):
+        await self.seed()
+        async with self.sessions.begin() as session:
+            session.add(self.models.User(User_ID="other", User_Name="其他", Plantform="test"))
+            session.add(self.models.Subscribe(id="other-group-a", username="other", group="group-a"))
+        await self.run_scheduled()
+        await self.rss.auto_update_func()
+        self.functions.asyncio.sleep.reset_mock()
+        await self.rss.auto_push_func()
+        self.assertEqual(self.functions.asyncio.sleep.await_count, 0, "同一RSS窗口重新采集不能使完成缓存失效")
+
+    async def test_failed_delivery_retries_same_snapshot_without_another_collection(self):
+        await self.seed()
+        await self.rss.auto_update_func()
+        self.bot.failed_groups.add("group-a")
+        await self.rss.auto_push_func()
+        self.bot.failed_groups.clear()
+        await self.rss.auto_push_func()
+        await self.rss.auto_push_func()
+        self.assertEqual([group for group, _ in self.bot.sent], ["group-a"])
+
+    async def enable_twitter(self):
+        await self.seed(groups=())
+        async with self.sessions.begin() as session:
+            (await session.get(self.models.Plantform, "test")).url = "/twitter/user/"
+        self.kuma_requests = []
+        self.kuma_accepted = []
+        self.kuma_connections = []
+        self.kuma_error = False
+        self.kuma_status = 200
+        self.kuma_payload = {"ok": True}
+        self.kuma_before_receive = None
+
+        async def receive(request):
+            self.kuma_requests.append(request)
+            self.kuma_connections.append(self.engine.pool.checkedout())
+            if self.kuma_before_receive:
+                await self.kuma_before_receive()
+            if self.kuma_error:
+                raise httpx.ConnectError("simulated Kuma unavailable", request=request)
+            if self.kuma_status == 200 and self.kuma_payload == {"ok": True}:
+                self.kuma_accepted.append(dict(request.url.params))
+            return httpx.Response(self.kuma_status, json=self.kuma_payload)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(receive))
+        self.addAsyncCleanup(client.aclose)
+        for patcher in (
+            patch.object(self.rss.config, "target_group_openid", "ops-group"),
+            patch.object(self.rss.config, "ut_url", "https://kuma.invalid/api/push/test-token?status=up&msg=OK&ping=&tenant=internal"),
+            patch.object(self.functions.config, "rsshub_host_back", []),
+            patch.object(self.functions.rss_get, "report_status", staticmethod(self.real_report_status)),
+            patch.object(self.functions.NetworkManager, "get_client", return_value=client),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def flush_twitter(self):
+        flush = getattr(self.rss, "auto_source_status_func", None)
+        self.assertTrue(callable(flush), "需要独立的 Twitter 状态通知任务")
+        await flush()
+
+    async def expire_twitter_cooldown(self):
+        async with self.sessions.begin() as session:
+            state = await session.get(self.models.RSSSourceStatus, "twitter")
+            state.retry_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+
+    async def test_twitter_reports_aggregated_status_and_recovery_to_kuma(self):
+        await self.enable_twitter()
+        valid = self.feed
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up"], "首次有效采集需初始化 Kuma 心跳")
+        self.feed = {"entries": [], "error": "limited", "status_code": 429,
+                     "rate_limited": True, "retry_after": 3600}
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up", "down"])
+        self.assertIn("Twitter 下线", self.kuma_accepted[-1]["msg"])
+        self.functions.fetch_feed.reset_mock()
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual(self.functions.fetch_feed.await_count, 0, "退避期内不能继续请求 Twitter")
+        self.assertEqual(len(self.kuma_accepted), 2)
+        await self.expire_twitter_cooldown()
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up", "down", "down"])
+        await self.expire_twitter_cooldown()
+        self.feed = valid
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up", "down", "down", "up", "up"])
+        self.assertIn("Twitter 上线", self.kuma_accepted[-1]["msg"])
+        self.assertEqual(self.bot.sent, [], "Twitter 监控不应直接发 QQ 消息")
+        for request in self.kuma_requests:
+            self.assertEqual(request.url.params.get_list("status"), [request.url.params["status"]])
+            self.assertEqual(len(request.url.params.get_list("msg")), 1)
+            self.assertEqual(request.url.params["tenant"], "internal")
+
+    async def test_one_twitter_account_failure_does_not_report_global_down(self):
+        await self.enable_twitter()
+        async with self.sessions.begin() as session:
+            session.add(self.models.User(User_ID="other", User_Name="正常", Plantform="test"))
+        with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=lambda url:
+            self.feed if url.endswith("/other") else {"entries": [], "error": "private", "status_code": 404}
+        )):
+            await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up"])
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_twitter_circuit_breaker_bounds_failures_without_blocking_other_platforms(self):
+        await self.enable_twitter()
+        async with self.sessions.begin() as session:
+            session.add_all(self.models.User(User_ID=f"other-{i}", User_Name="Twitter", Plantform="test") for i in range(4))
+            session.add(self.models.Plantform(name="bilibili", url="/bilibili/user/", need_trans="0"))
+            session.add(self.models.User(User_ID="zzz-bili", User_Name="B站", Plantform="bilibili"))
+        with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=lambda url:
+            self.feed if "/bilibili/" in url else {"entries": [], "error": "unavailable", "status_code": 503}
+        )) as fetch:
+            await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual(fetch.await_count, 4, "连续3个Twitter账号全源失败后，剩余Twitter账号应暂停；其他平台照常")
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["down"], "其他平台成功不能把 Twitter 故障覆盖为在线")
+        self.assertEqual(self.bot.sent, [])
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertEqual([row.username for row in cached], ["B站"])
+
+    async def test_kuma_outage_retries_without_requiring_qq_or_target_group(self):
+        await self.enable_twitter()
+        self.feed = {"entries": [], "error": "limited", "rate_limited": True}
+        await self.rss.auto_update_func()
+        self.kuma_error = True
+        await self.flush_twitter()
+        async with self.sessions() as session:
+            self.assertEqual(len(list(await session.scalars(select(self.models.RSSSourceNotice)))), 1)
+        self.kuma_error = False
+        with patch.object(self.rss, "get_bot", side_effect=ValueError("offline")), patch.object(
+            self.rss.config, "target_group_openid", None,
+        ), patch.object(self.rss, "is_current_time_in_period", return_value=True):
+            await self.flush_twitter()
+            await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["down"])
+        self.assertIn("Twitter 下线", self.kuma_accepted[0]["msg"])
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_twitter_backup_success_does_not_trigger_down_or_cooldown(self):
+        await self.enable_twitter()
+        with patch.object(self.functions.config, "rsshub_host_back", ["https://backup.invalid"]), patch.object(
+            self.functions, "fetch_feed", AsyncMock(side_effect=[
+                {"entries": [], "error": "limited", "rate_limited": True}, self.feed,
+            ]),
+        ):
+            await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up"])
+        self.assertEqual(self.bot.sent, [])
+        async with self.sessions() as session:
+            state = await session.get(self.models.RSSSourceStatus, "twitter")
+        self.assertIsNone(state.retry_at)
+
+    async def test_account_404_and_broken_backup_do_not_trip_global_breaker(self):
+        await self.enable_twitter()
+        async with self.sessions.begin() as session:
+            session.add_all(self.models.User(User_ID=f"other-{i}", User_Name="其他", Plantform="test") for i in range(3))
+
+        def respond(url):
+            if url.startswith("https://backup.invalid"):
+                return {"entries": [], "error": "unavailable", "status_code": 503}
+            if url.endswith("/other-2"):
+                return self.feed
+            return {"entries": [], "error": "private", "status_code": 404}
+
+        with patch.object(self.functions.config, "rsshub_host_back", ["https://backup.invalid"]), patch.object(
+            self.functions, "fetch_feed", AsyncMock(side_effect=respond),
+        ) as fetch:
+            await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual(fetch.await_count, 7, "前三个失效账号不能让第四个正常账号被跳过")
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up"])
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_empty_valid_twitter_feed_is_not_an_outage(self):
+        await self.enable_twitter()
+        self.feed = feedparser.parse('<rss version="2.0"><channel><title>空账号</title>'
+            '<link>https://example.com</link><description>暂无文章</description></channel></rss>')
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up"])
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_twitter_cooldown_and_pending_transitions_survive_new_instances(self):
+        await self.enable_twitter()
+        valid = self.feed
+        self.feed = {"entries": [], "error": "limited", "rate_limited": True}
+        await self.rss.auto_update_func()
+        self.functions.fetch_feed.reset_mock()
+        # 模拟替换进程内采集器和锁，数据库保持原样。
+        with patch.object(self.rss, "R", self.functions.rss_get()), patch.object(
+            self.rss, "_collection_lock", asyncio.Lock(),
+        ):
+            await self.rss.auto_update_func()
+            self.assertEqual(self.functions.fetch_feed.await_count, 0)
+            await self.expire_twitter_cooldown()
+            self.feed = valid
+            await self.rss.auto_update_func()
+        await self.flush_twitter()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["down", "up"])
+        self.assertEqual(self.kuma_connections, [0, 0], "Kuma HTTP 请求期间不能占着数据库连接")
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_private_twitter_account_alone_does_not_prove_global_outage(self):
+        await self.enable_twitter()
+        self.feed = {"entries": [], "error": "not found", "status_code": 404}
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual(self.kuma_requests, [], "单个私密账号不能触发 Kuma 全局故障")
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_valid_empty_feed_recovers_twitter_without_discarding_cached_posts(self):
+        await self.enable_twitter()
+        await self.rss.auto_update_func()
+        self.feed = {"entries": [], "error": "unavailable", "status_code": 503}
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        await self.expire_twitter_cooldown()
+        self.feed = feedparser.parse('<rss version="2.0"><channel><title>空窗口</title>'
+            '<link>https://example.com</link><description>暂无</description></channel></rss>')
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        async with self.sessions() as session:
+            self.assertEqual(len(list(await session.scalars(select(self.models.Content)))), 1)
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up", "down", "up"])
+        self.assertIn("Twitter 上线", self.kuma_accepted[-1]["msg"])
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_kuma_rejected_push_is_retained_until_acknowledged(self):
+        await self.enable_twitter()
+        self.feed = {"entries": [], "error": "limited", "rate_limited": True}
+        await self.rss.auto_update_func()
+        for status, payload in ((503, {"ok": False}), (200, {"ok": False}), (200, {})):
+            with self.subTest(status=status, payload=payload):
+                self.kuma_status, self.kuma_payload = status, payload
+                await self.flush_twitter()
+                async with self.sessions() as session:
+                    self.assertEqual(len(list(await session.scalars(select(self.models.RSSSourceNotice)))), 1)
+        self.kuma_status, self.kuma_payload = 200, {"ok": True}
+        await self.flush_twitter()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["down"])
+
+    async def test_kuma_healthy_heartbeat_repeats_per_collection_without_queue_growth(self):
+        await self.enable_twitter()
+        for _ in range(3):
+            await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            self.assertEqual(len(list(await session.scalars(select(self.models.RSSSourceNotice)))), 1)
+        await self.flush_twitter()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up"])
+        await self.rss.auto_update_func()
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up", "up"])
+
+    async def test_unconfigured_kuma_only_records_source_state(self):
+        await self.enable_twitter()
+        self.feed = {"entries": [], "error": "limited", "rate_limited": True}
+        with patch.object(self.rss.config, "ut_url", None):
+            await self.rss.auto_update_func()
+            await self.flush_twitter()
+        async with self.sessions() as session:
+            self.assertFalse((await session.get(self.models.RSSSourceStatus, "twitter")).available)
+            self.assertEqual(list(await session.scalars(select(self.models.RSSSourceNotice))), [])
+        self.assertEqual(self.kuma_requests, [])
+        self.assertEqual(self.bot.sent, [])
+
+    async def test_kuma_ack_does_not_delete_a_new_observation_merged_during_request(self):
+        await self.enable_twitter()
+        await self.rss.auto_update_func()
+
+        async def collect_during_request():
+            self.kuma_before_receive = None
+            await self.rss._observe_twitter(True)
+
+        self.kuma_before_receive = collect_during_request
+        await self.flush_twitter()
+        async with self.sessions() as session:
+            pending = list(await session.scalars(select(self.models.RSSSourceNotice)))
+        self.assertEqual(len(pending), 1, "旧HTTP响应不能删除发送期间产生的新观测")
+        await self.flush_twitter()
+        self.assertEqual([row["status"] for row in self.kuma_accepted], ["up", "up"])
+        async with self.sessions() as session:
+            self.assertEqual(list(await session.scalars(select(self.models.RSSSourceNotice))), [])
+
+    async def test_twitter_service_failures_keep_longest_retry_after(self):
+        for count in (1, 3):
+            with self.subTest(accounts=count):
+                # 单账号轮末失败和多账号熔断都必须保留之前响应的最长 Retry-After。
+                if count == 1:
+                    await self.enable_twitter()
+                else:
+                    async with self.sessions.begin() as session:
+                        state = await session.get(self.models.RSSSourceStatus, "twitter")
+                        state.retry_at = None
+                        session.add_all(self.models.User(User_ID=f"other-{i}", User_Name="其他", Plantform="test") for i in range(2))
+                with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=[
+                    {"entries": [], "error": "unavailable", "status_code": 503,
+                     "retry_after": 3600 if i == 0 else 0} for i in range(count)
+                ])):
+                    await self.rss.auto_update_func()
+                async with self.sessions() as session:
+                    state = await session.get(self.models.RSSSourceStatus, "twitter")
+                    seconds = (state.retry_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+                self.assertGreater(seconds, 3590)
+
+    async def test_twitter_notice_database_failure_does_not_stop_other_platforms(self):
+        await self.enable_twitter()
+        async with self.sessions.begin() as session:
+            session.add(self.models.Plantform(name="bilibili", url="/bilibili/user/", need_trans="0"))
+            session.add(self.models.User(User_ID="zzz-bili", User_Name="B站", Plantform="bilibili"))
+            await session.execute(text("CREATE TRIGGER fail_notice BEFORE INSERT ON rss_source_notice "
+                                       "BEGIN SELECT RAISE(FAIL, 'simulated notice DB failure'); END"))
+        with patch.object(self.functions, "fetch_feed", AsyncMock(side_effect=lambda url:
+            self.feed if "/bilibili/" in url else {"entries": [], "error": "limited", "rate_limited": True}
+        )):
+            await self.rss.auto_update_func()
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertEqual([row.username for row in cached], ["B站"])
+
+    async def test_cached_snapshot_preserves_enclosures_when_translation_is_added(self):
+        from nsy.plugins.rssget import format_json
+
+        await self.seed()
+        async with self.sessions.begin() as session:
+            (await session.get(self.models.Plantform, "test")).need_trans = "1"
+        self.feed = feedparser.parse(RSS_FEED.replace(
+            "</item>", '<enclosure url="https://example.com/attachment.jpg" type="image/jpeg" /></item>',
+        ))
+        with patch.object(format_json.PLATFORMS[0], "main", AsyncMock(return_value="译文")):
+            await self.run_scheduled()
+        self.assertEqual([message.type for _, message in self.bot.sent], ["markdown", "file_image"])
+        async with self.sessions() as session:
+            cached = list((await session.scalars(select(self.models.Content))).all())
+        self.assertIn("https://example.com/attachment.jpg", cached[0].images)
 
     async def test_full_cache_preserves_translation_and_only_translates_delivered_articles(self):
         from nsy.plugins.rssget import format_json
