@@ -1,15 +1,24 @@
+from __future__ import annotations
+
 import json
 import re
+from typing import TYPE_CHECKING
+
 import httpx
-from openai import AsyncOpenAI
 from nonebot import get_plugin_config
 
-from alibabacloud_tea_openapi.client import Client as OpenApiClient
-from alibabacloud_credentials.client import Client as CredentialClient
-from alibabacloud_tea_openapi import models as open_api_models
-from alibabacloud_tea_util import models as util_models
+if TYPE_CHECKING:
+    from alibabacloud_tea_openapi.client import Client as OpenApiClient
+    from alibabacloud_tea_openapi import models as open_api_models
 
 from .config import Config
+
+
+def AsyncOpenAI(*args, **kwargs):
+    """Load the optional OpenAI SDK only when translating; retain a patchable factory."""
+    from openai import AsyncOpenAI as client_type
+
+    return client_type(*args, **kwargs)
 
 
 def get_config():
@@ -74,6 +83,10 @@ class Ali:
         @return: Client
         @throws Exception
         """
+        from alibabacloud_tea_openapi.client import Client as OpenApiClient
+        from alibabacloud_credentials.client import Client as CredentialClient
+        from alibabacloud_tea_openapi import models as open_api_models
+
         cfg = get_config()
         credential = CredentialClient()
         api_config = open_api_models.Config(
@@ -92,6 +105,8 @@ class Ali:
         @param path: string Path parameters
         @return: OpenApi.Params
         """
+        from alibabacloud_tea_openapi import models as open_api_models
+
         params = open_api_models.Params(
             # 接口名称,
             action='TranslateGeneral',
@@ -124,6 +139,9 @@ class Ali:
         """
         异步调用
         """
+        from alibabacloud_tea_openapi import models as open_api_models
+        from alibabacloud_tea_util import models as util_models
+
         client = Ali.create_client()
         params = Ali.create_api_info()
         # body params

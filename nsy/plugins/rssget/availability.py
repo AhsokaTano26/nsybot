@@ -1,10 +1,11 @@
 """采集链路状态与待发送通知；所有事务都在网络请求之外完成。"""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
 from .models import RSSSourceNotice, RSSSourceStatus
+from .state_machines import source_health_transition
 
 
 class FeedUnavailable(Exception):
@@ -33,15 +34,17 @@ class SourceHealthManager:
     async def observe(session, available, *, notify, cooldown=0):
         now = utc_now()
         state = await session.get(RSSSourceStatus, "twitter")
-        changed = state is not None and state.available != available
+        transition = source_health_transition(
+            state.available if state is not None else None, available, now,
+            notify=notify, cooldown=cooldown,
+        )
         if state is None:
-            changed = not available  # 正常启动不发送上线消息。
             state = RSSSourceStatus(source="twitter")
             session.add(state)
-        state.available = available
-        state.observed_at = now
-        state.retry_at = now + timedelta(seconds=cooldown) if not available and cooldown else None
-        if notify:
+        state.available = transition.available
+        state.observed_at = transition.observed_at
+        state.retry_at = transition.retry_at
+        if transition.enqueue_notice:
             # 每轮有效探测都给 Kuma 心跳；连续同状态的未发送记录合并，避免故障时积压。
             pending = await session.scalar(select(RSSSourceNotice).where(
                 RSSSourceNotice.source == "twitter",
@@ -50,7 +53,7 @@ class SourceHealthManager:
                 pending.observed_at = now
             else:
                 session.add(RSSSourceNotice(source="twitter", available=available, observed_at=now))
-        return changed
+        return transition.changed
 
     @staticmethod
     async def pending(session):

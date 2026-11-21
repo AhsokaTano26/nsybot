@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 TEST_ROOT = tempfile.TemporaryDirectory(prefix="nsybot-birthday-tests-")
 nonebot.init(
     driver="~fastapi",
+    command_start={""},
     sqlalchemy_database_url="sqlite+aiosqlite:///:memory:",
     localstore_data_dir=Path(TEST_ROOT.name) / "data",
     localstore_cache_dir=Path(TEST_ROOT.name) / "cache",

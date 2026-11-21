@@ -16,6 +16,12 @@ services:
       ENVIRONMENT: prod
       HOST: *config-host
       PORT: *config-port
+      REFRESH_TIME: "20"
+      WEB_CONCURRENCY: "1"
+      MAX_WORKERS: "1"
+    # 整个运行容器的十进制 300 MB 上限；禁止以 swap 隐藏超额内存。
+    mem_limit: 300000000
+    memswap_limit: 300000000
     restart: always
 
     volumes:

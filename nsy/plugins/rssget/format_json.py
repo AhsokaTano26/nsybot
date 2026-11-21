@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 from datetime import datetime, timedelta
 
 from bs4 import BeautifulSoup
@@ -7,7 +8,6 @@ from nonebot import get_plugin_config
 from nonebot.log import logger
 
 from .config import Config
-from .trans_msg import if_trans, remove_html_tag_soup
 from .translation import Ali, BaiDu, DeepSeek, Ollama
 
 config = get_plugin_config(Config)
@@ -32,6 +32,13 @@ PLATFORMS = {
 }
 
 TRANSLATION_TIMEOUT = 60
+_translation_capacity = asyncio.Semaphore(1)
+
+
+def check_entry_size(entry):
+    entry_bytes = len(json.dumps(entry, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8"))
+    if entry_bytes > config.rss_entry_max_bytes:
+        raise ValueError("EntryTooLarge")
 
 
 class Format:
@@ -59,6 +66,8 @@ class Format:
     async def extract_content(self, entry, if_need_trans, translator=None) -> dict:
         """提取推文内容结构化数据"""
 
+        check_entry_size(entry)
+
         parsed_date = entry.get("published_parsed") or entry.get("updated_parsed")
         try:
             dt = datetime(*parsed_date[:6]) + timedelta(hours=8)
@@ -66,25 +75,10 @@ class Format:
         except (TypeError, ValueError, IndexError):
             published = entry.get("published") or entry.get("updated") or "未知时间"
 
-        # 清理文本内容
-        await if_trans(entry)
+        # 保留原始 HTML 中的全部图片，再移除引用正文；每条文章只解析一次。
         description = entry.get("description") or entry.get("summary") or ""
         if not description and entry.get("content"):
             description = entry["content"][0].get("value", "")
-        clean_text_old = await remove_html_tag_soup(description)
-        clean_text = BeautifulSoup(clean_text_old, "html.parser").get_text("\n").strip()
-        clean_text = clean_text or entry.get("title") or ""
-        trans_text_final = None
-        if if_need_trans == 1 and clean_text:
-            trans = translator or PLATFORMS.get(TRANS_PLATFORM) or PLATFORMS[0]
-            try:
-                translated = await asyncio.wait_for(trans.main(clean_text), timeout=TRANSLATION_TIMEOUT)
-                if translated:
-                    trans_text_final = translated.replace("+", "\n")
-            except Exception as exc:
-                logger.warning(f"翻译暂不可用，将发送原文：{type(exc).__name__}")
-
-        # 提取图片（优先媒体内容）
         images = []
         for media in entry.get("media_content", []):
             if media.get("type", "").startswith("image/") and media.get("url"):
@@ -97,11 +91,31 @@ class Format:
                 if enc.get("type", "").startswith("image/") and url:
                     images.append(url)
 
-        if description:
-            soup = BeautifulSoup(description, 'html.parser')
+        soup = BeautifulSoup(description, "html.parser")
+        try:
             for img in soup.find_all('img', src=True):
                 images.append(img['src'])
+            quotes = soup.find_all("div", class_="rsshub-quote")
+            if quotes:
+                logger.info("该推文为引用推文")
+            for quote in quotes:
+                quote.decompose()
+            clean_text = soup.get_text("\n").strip() or entry.get("title") or ""
+        finally:
+            # BeautifulSoup 节点互相引用，主动释放后再等待翻译网络请求。
+            soup.decompose()
         images = list(dict.fromkeys(images))
+
+        trans_text_final = None
+        if if_need_trans == 1 and clean_text:
+            trans = translator or PLATFORMS.get(TRANS_PLATFORM) or PLATFORMS[0]
+            try:
+                async with _translation_capacity:
+                    translated = await asyncio.wait_for(trans.main(clean_text), timeout=TRANSLATION_TIMEOUT)
+                if translated:
+                    trans_text_final = translated.replace("+", "\n")
+            except Exception as exc:
+                logger.warning(f"翻译暂不可用，将发送原文：{type(exc).__name__}")
 
         return {
             "title": entry.get("title") or None,

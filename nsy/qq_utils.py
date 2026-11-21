@@ -13,7 +13,7 @@ import re
 import time
 from weakref import WeakValueDictionary
 from typing import Sequence
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 from nonebot.adapters.qq import Bot, Event, Message, MessageSegment
@@ -35,6 +35,8 @@ _IMAGE_EXTENSIONS = {
     "image/webp": ".webp",
 }
 _IMAGE_HEADERS = {
+    # 图片本身已有编码；拒绝 HTTP 再压缩，避免解码器在大小检查前膨胀。
+    "Accept-Encoding": "identity",
     "Accept": "image/avif,image/webp,image/png,image/*,*/*;q=0.8",
     "Referer": "https://x.com/",
     "User-Agent": "Mozilla/5.0 (compatible; nsybot/1.0)",
@@ -62,6 +64,8 @@ class ActiveMessageLimiter:
         key = (bot_id, group_id)
         async with lock:
             now = self.clock()
+            self.bot_next = {key: value for key, value in self.bot_next.items() if value > now}
+            self.group_next = {key: value for key, value in self.group_next.items() if value > now}
             delay = max(self.bot_next.get(bot_id, now), self.group_next.get(key, now)) - now
             if delay > 0:
                 await (self.sleeper or asyncio.sleep)(delay)
@@ -79,6 +83,14 @@ class ActiveMessageLimiter:
 
 
 active_message_limiter = ActiveMessageLimiter()
+_image_capacity = asyncio.Semaphore(1)
+
+
+@asynccontextmanager
+async def image_transfer_slot():
+    """从下载到 QQ 上传完成共用一个时隙，等待限速时也不堆积图片。"""
+    async with _image_capacity:
+        yield
 
 
 def group_openid(event: GroupMessageCreateEvent) -> str:
@@ -363,24 +375,35 @@ async def download_image(
 
     try:
         assert client is not None
-        async with client.stream("GET", url, headers=_IMAGE_HEADERS) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").split(";", 1)[0]
-            if content_type and content_type not in _IMAGE_EXTENSIONS:
-                raise ValueError(f"远程地址未返回图片（Content-Type: {content_type}）")
-
-            chunks: list[bytes] = []
-            size = 0
-            async for chunk in response.aiter_bytes():
-                size += len(chunk)
-                if size > MAX_IMAGE_BYTES:
-                    raise ValueError("图片超过 10 MiB 上传上限")
-                chunks.append(chunk)
-
-        suffix = _IMAGE_EXTENSIONS.get(content_type)
-        if not suffix:
-            suffix = PurePosixPath(urlparse(url).path).suffix or ".jpg"
-        return b"".join(chunks), f"rss-image{suffix}"
+        target = url
+        for _ in range(6):
+            async with client.stream("GET", target, headers=_IMAGE_HEADERS, follow_redirects=False) as response:
+                if response.is_redirect and response.headers.get("location"):
+                    target = urljoin(str(response.url), response.headers["location"])
+                    if urlparse(target).scheme not in {"http", "https"}:
+                        raise ValueError("图片重定向地址无效")
+                    continue
+                return await _read_image(response, url)
+        raise ValueError("图片重定向次数过多")
     finally:
         if owns_client:
             await client.aclose()
+
+
+async def _read_image(response, url):
+    response.raise_for_status()
+    if response.headers.get("content-encoding", "identity").lower().strip() not in {"", "identity"}:
+        raise ValueError("图片不支持 HTTP 压缩传输")
+    content_type = response.headers.get("content-type", "").split(";", 1)[0]
+    if content_type and content_type not in _IMAGE_EXTENSIONS:
+        raise ValueError(f"远程地址未返回图片（Content-Type: {content_type}）")
+    length = response.headers.get("content-length", "")
+    if length.isdigit() and int(length) > MAX_IMAGE_BYTES:
+        raise ValueError("图片超过 10 MiB 上传上限")
+    chunks = bytearray()
+    async for chunk in response.aiter_bytes():
+        if len(chunks) + len(chunk) > MAX_IMAGE_BYTES:
+            raise ValueError("图片超过 10 MiB 上传上限")
+        chunks.extend(chunk)
+    suffix = _IMAGE_EXTENSIONS.get(content_type) or PurePosixPath(urlparse(url).path).suffix or ".jpg"
+    return bytes(chunks), f"rss-image{suffix}"

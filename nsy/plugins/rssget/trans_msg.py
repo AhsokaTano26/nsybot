@@ -1,21 +1,22 @@
 from bs4 import BeautifulSoup
 from nonebot.log import logger
+from .format_json import check_entry_size
 
 async def if_trans(entry):
+    check_entry_size(entry)
     description = entry.get("description", "")
 
     # 使用 BeautifulSoup 解析 HTML
     soup = BeautifulSoup(description, "html.parser")
 
-    # 检测是否存在 class="rsshub-quote" 的 div
-    quote_div = soup.find("div", class_="rsshub-quote")
-
-    # 判断结果
-    if quote_div:
-        logger.info("该推文为引用推文")
-        return True
-    else:
+    try:
+        # 检测是否存在 class="rsshub-quote" 的 div
+        if soup.find("div", class_="rsshub-quote"):
+            logger.info("该推文为引用推文")
+            return True
         return False
+    finally:
+        soup.decompose()
 
 async def if_self_trans(username,entry):
     flag = "RT " + username
@@ -40,8 +41,10 @@ async def remove_html_tag_soup(html):
     """
     soup = BeautifulSoup(html, 'html.parser')
 
-    # 找到所有目标标签并移除
-    for tag in soup.find_all('div', class_='rsshub-quote'):
-        tag.decompose()  # 彻底移除标签及其内容
-
-    return str(soup)
+    try:
+        # 找到所有目标标签并移除
+        for tag in soup.find_all('div', class_='rsshub-quote'):
+            tag.decompose()  # 彻底移除标签及其内容
+        return str(soup)
+    finally:
+        soup.decompose()

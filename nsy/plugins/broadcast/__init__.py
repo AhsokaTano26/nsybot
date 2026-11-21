@@ -12,7 +12,7 @@ from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
-from nsy.qq_utils import (download_image, error, file_image, markdown,
+from nsy.qq_utils import (download_image, error, file_image, image_transfer_slot, markdown,
                           send_group_message, success, user_openid)
 
 from .config import Config
@@ -72,8 +72,12 @@ async def send_broadcast(key: str) -> bool:
     failed_images = 0
     for index, url in enumerate(message.images, start=1):
         try:
-            data, file_name = await download_image(url)
-            await send_group_message(bot, group_id, file_image(data, file_name))
+            async with image_transfer_slot():
+                data, file_name = await download_image(url)
+                try:
+                    await send_group_message(bot, group_id, file_image(data, file_name))
+                finally:
+                    del data
         except Exception as e:
             failed_images += 1
             logger.opt(exception=True).error(

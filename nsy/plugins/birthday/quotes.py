@@ -1,6 +1,7 @@
 """将引用的生日语录逐群发送，保留正文及各个富媒体附件。"""
 
 from collections.abc import Callable
+from contextlib import nullcontext
 import re
 
 from markdown_it import MarkdownIt
@@ -8,9 +9,11 @@ from nonebot.adapters.qq import Bot, Message, MessageSegment
 from nonebot.log import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nsy.qq_utils import MAX_MARKDOWN_CHARS, download_image, file_image, send_group_message
+from nsy.qq_utils import MAX_IMAGE_BYTES, MAX_MARKDOWN_CHARS, download_image, file_image, image_transfer_slot, send_group_message
 
 from .store import BirthdayStore
+
+MAX_QUOTE_IMAGE_BYTES = MAX_IMAGE_BYTES
 
 
 async def quote_messages(quote: Message) -> list[MessageSegment]:
@@ -22,6 +25,8 @@ async def quote_messages(quote: Message) -> list[MessageSegment]:
 
     messages = []
     text = quote.extract_content(escape_text=False)
+    if len(text) > 256 * 1024:
+        raise ValueError("引用消息正文过长，请拆分后发送。")
     if text.strip():
         boundaries = {len(text)}
         if len(text) > MAX_MARKDOWN_CHARS:
@@ -40,6 +45,7 @@ async def quote_messages(quote: Message) -> list[MessageSegment]:
             messages.append(MessageSegment.markdown(text[start:end]))
             start = end
 
+    image_bytes = 0
     for segment in quote:
         if segment.type == "image":
             try:
@@ -47,7 +53,11 @@ async def quote_messages(quote: Message) -> list[MessageSegment]:
             except Exception as exc:
                 logger.warning(f"生日语录图片准备失败: {exc}")
                 raise ValueError("生日语录图片准备失败，未向任何群发送，请稍后重试。") from exc
+            image_bytes += len(data)
+            if image_bytes > MAX_QUOTE_IMAGE_BYTES:
+                raise ValueError("生日语录图片总量超过 10 MiB，未向任何群发送，请拆分后重试。")
             messages.append(file_image(data, file_name))
+            del data
         elif segment.type in media_types:
             messages.append(segment.copy())
     if not messages:
@@ -71,6 +81,12 @@ async def broadcast_quote(
     if not groups:
         return 0, 0
 
+    slot = image_transfer_slot() if any(segment.type == "image" for segment in quote) else nullcontext()
+    async with slot:
+        return await _send_quote(bot, groups, quote, source_group_id)
+
+
+async def _send_quote(bot, groups, quote, source_group_id):
     messages = await quote_messages(quote)
     sent = failed = 0
     for group_id in groups:

@@ -27,6 +27,9 @@ else:
     if use_max_workers:
         web_concurrency = min(web_concurrency, use_max_workers)
 
+# APScheduler 和采集状态属于单进程；多 worker 会重复任务且突破容器预算。
+web_concurrency = 1
+
 graceful_timeout_str = os.getenv("GRACEFUL_TIMEOUT", "900")
 timeout_str = os.getenv("TIMEOUT", "900")
 keepalive_str = os.getenv("KEEP_ALIVE", "5")

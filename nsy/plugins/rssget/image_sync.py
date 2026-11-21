@@ -11,6 +11,7 @@ from nonebot import get_app, get_plugin_config
 from nonebot_plugin_orm import get_session
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.engine import Row
 
 from .config import Config
 from .models import Content, ImageSync
@@ -50,7 +51,7 @@ def require_sync_token(authorization: str | None = Header(default=None)) -> None
         raise HTTPException(status_code=401, detail="Invalid bearer token", headers={"WWW-Authenticate": "Bearer"})
 
 
-def image_item(seq: int, content: Content) -> ImageItem:
+def image_item(seq: int, content: Content | Row) -> ImageItem:
     tweet_id = handle = published_at = None
     try:
         url = urlsplit(content.link or "")
@@ -86,10 +87,11 @@ async def list_images(
         raise HTTPException(status_code=422, detail="Cursor is out of range")
     async with get_session() as session:
         rows = (await session.execute(
-            select(ImageSync.seq, Content).join(Content, Content.id == ImageSync.content_id)
+            select(ImageSync.seq, Content.id, Content.username, Content.time, Content.link, Content.images)
+            .join(Content, Content.id == ImageSync.content_id)
             .where(ImageSync.seq > after).order_by(ImageSync.seq).limit(limit + 1)
         )).all()
-        items = [image_item(seq, content) for seq, content in rows[:limit]]
+    items = [image_item(row.seq, row) for row in rows[:limit]]
     response.headers["Cache-Control"] = "no-store"
     return ImagePage(items=items, next_cursor=items[-1].seq if items else cursor, has_more=len(rows) > limit)
 

@@ -1,0 +1,104 @@
+{
+  "python_sqlite": "3.46.1",
+  "python": "3.12.16",
+  "architecture": "aarch64",
+  "interval_seconds": 1200,
+  "cases": [
+    {
+      "case": "startup_after_migrations",
+      "current_bytes": 223707136,
+      "peak_bytes": 254763008,
+      "anon_bytes": 118808576,
+      "file_bytes": 83349504
+    },
+    {
+      "case": "cycle_0_collect_and_push",
+      "current_bytes": 242749440,
+      "peak_bytes": 254763008,
+      "anon_bytes": 126844928,
+      "file_bytes": 94011392,
+      "seconds": 1.9603
+    },
+    {
+      "case": "cycle_1_collect_and_push",
+      "current_bytes": 242425856,
+      "peak_bytes": 297336832,
+      "anon_bytes": 128856064,
+      "file_bytes": 91660288,
+      "seconds": 3.0771
+    },
+    {
+      "case": "cycle_2_collect_and_push",
+      "current_bytes": 243593216,
+      "peak_bytes": 297336832,
+      "anon_bytes": 129970176,
+      "file_bytes": 91709440,
+      "seconds": 0.2084
+    },
+    {
+      "case": "optional_sdks_first_use",
+      "current_bytes": 299929600,
+      "peak_bytes": 299999232,
+      "anon_bytes": 163659776,
+      "file_bytes": 113340416
+    },
+    {
+      "case": "concurrent_api_and_10MiB_images",
+      "current_bytes": 261197824,
+      "peak_bytes": 299999232,
+      "anon_bytes": 166248448,
+      "file_bytes": 72278016,
+      "seconds": 0.1801
+    },
+    {
+      "case": "dense_2_5MiB_feed",
+      "current_bytes": 287150080,
+      "peak_bytes": 299999232,
+      "anon_bytes": 192180224,
+      "file_bytes": 72278016
+    },
+    {
+      "case": "100_failed_entries_recovered",
+      "current_bytes": 294461440,
+      "peak_bytes": 299999232,
+      "anon_bytes": 197529600,
+      "file_bytes": 73961472
+    },
+    {
+      "case": "10_unchanged_cycles",
+      "current_bytes": 299524096,
+      "peak_bytes": 299999232,
+      "anon_bytes": 197529600,
+      "file_bytes": 79273984,
+      "seconds": 2.2414
+    },
+    {
+      "case": "post_warm_api_and_10MiB_images",
+      "current_bytes": 250122240,
+      "peak_bytes": 299999232,
+      "anon_bytes": 187871232,
+      "file_bytes": 39546880,
+      "seconds": 0.1895
+    },
+    {
+      "case": "oversized_entry_retained",
+      "current_bytes": 252547072,
+      "peak_bytes": 299999232,
+      "anon_bytes": 189280256,
+      "file_bytes": 40148992
+    }
+  ],
+  "ok": true,
+  "sends": 166,
+  "content": 900,
+  "indexed": 800,
+  "events": "low 0\nhigh 0\nmax 515\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n",
+  "limit_bytes": 299999232,
+  "peak_bytes": 299999232,
+  "image_tag": "nsybot-memory-300m:local",
+  "image_id": "sha256:e803203ae3d1d24b15d9ebfca5887a9db53245a059a44d93b410e18c18e458e5",
+  "source_base_commit": "794f01ab50a620c90b47f63af2c90baa53351cab",
+  "source_state": "uncommitted working tree",
+  "verified_date": "2026-11-21",
+  "test_count": 270
+}

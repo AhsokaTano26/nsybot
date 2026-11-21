@@ -2,7 +2,7 @@ import httpx
 from nonebot import get_bot
 from nonebot.log import logger
 
-from nsy.qq_utils import download_image, error, file_image, send_group_message
+from nsy.qq_utils import download_image, error, file_image, image_transfer_slot, send_group_message
 
 class SendMsg:
     async def send_qq_image(self, img_url: str, group_id: str, num: int = 0):
@@ -10,11 +10,12 @@ class SendMsg:
         bot = get_bot()
         num += 1
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
+            async with image_transfer_slot(), httpx.AsyncClient(timeout=20) as client:
                 data, file_name = await download_image(img_url, client)
-                await send_group_message(
-                    bot, str(group_id), file_image(data, file_name)
-                )
+                try:
+                    await send_group_message(bot, str(group_id), file_image(data, file_name))
+                finally:
+                    del data
 
         except Exception as e:
             logger.opt(exception=False).error(f"意外错误|图片发送失败: {str(e)}  第 {num} 次重试")

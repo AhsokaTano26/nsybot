@@ -39,6 +39,8 @@ docker compose logs -f nonebot
 | [部署说明](docs/deployment.md) | Docker、本地运行、开发与环境配置 |
 | [QQ 官方 Bot 接入](docs/qq-official-bot.md) | 凭据、WebSocket / Webhook、OpenID 与权限 |
 | [RSS 使用指南](docs/rss.md) | 平台配置、订阅命令、群组设置与管理命令 |
+| [状态机与数据流转图](docs/rss-architecture.md) | 六张矢量图：采集、入库补偿、QQ 投递、图片同步与 Kuma 通知 |
+| [性能与资源预算](docs/performance.md) | 20 分钟采集、300 MB 容器限制、业务状态与验证方法 |
 | [内部图片同步 API](docs/image-sync.md) | 全量缓存、增量与历史拉取、Token 鉴权及 Docker 内网接入 |
 | [生日提醒](docs/birthday.md) | 启用、订阅、昵称格式与提醒规则 |
 | [生日数据导入](docs/birthday-import-commands.md) | 批量导入命令与关联标签 |

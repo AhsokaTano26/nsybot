@@ -1,10 +1,12 @@
 import ast
 import asyncio
 import json
+from time import monotonic
 
 import feedparser
 
 from nonebot.log import logger
+from nonebot import get_plugin_config
 from nonebot_plugin_orm import get_session
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -13,12 +15,20 @@ from sqlalchemy.orm.exc import StaleDataError
 from .models import Content, ImageSync, RSSIngestQueue
 from .models_method import ContentManager
 from .ingest_queue import IngestQueueManager
+from .config import Config
+from .state_machines import WriteOutcome
 
 _ingest_lock = asyncio.Lock()
 _stage_lock = asyncio.Lock()
+config = get_plugin_config(Config)
 
 
 async def update_text(dic, *, pending_version=None):
+    """旧入口保留 bool 契约；业务工作器使用明确的 WriteOutcome。"""
+    return bool(await write_content(dic, pending_version=pending_version))
+
+
+async def write_content(dic, *, pending_version=None):
     """缓存尽力写入；缓存失败不阻断当前原文推送。"""
     images = list(dict.fromkeys(dic.get("images") or []))
     values = {key: dic.get(key) for key in (
@@ -34,7 +44,7 @@ async def update_text(dic, *, pending_version=None):
                         RSSIngestQueue.id == dic["id"], RSSIngestQueue.version == pending_version,
                     ))
                     if not claimed.rowcount:
-                        return True  # 已由其他写入完成，或原始条目已更新，不能写入旧版本。
+                        return WriteOutcome.SUPERSEDED
                 existing = await ContentManager.get_Sign_by_student_id(session, dic["id"])
                 if existing is None:
                     session.add(Content(id=dic["id"], **values))
@@ -48,15 +58,15 @@ async def update_text(dic, *, pending_version=None):
                 if images and await session.scalar(select(ImageSync.seq).where(ImageSync.content_id == dic["id"])) is None:
                     session.add(ImageSync(content_id=dic["id"]))
                 await session.commit()
-            return True
+            return WriteOutcome.COMMITTED
         except IntegrityError:
             # 并发文章缓存插入冲突，关闭回滚会话后重读并更新。
             if attempt:
                 logger.warning("文章缓存并发写入失败，当前仍将发送原文")
         except SQLAlchemyError as exc:
             logger.warning(f"文章缓存写入失败，当前仍将发送原文：{type(exc).__name__}")
-            return False
-    return False
+            return WriteOutcome.RETRY_PENDING
+    return WriteOutcome.RETRY_PENDING
 
 
 async def get_text(id) -> dict[str, str]:
@@ -154,17 +164,24 @@ async def _retry_pending_entries(*, limit, ids=None):
     from .format_json import Format
 
     async with get_session() as session:
-        pending = await IngestQueueManager.due(session, limit, ids)
-    for item in pending:
+        pending = await IngestQueueManager.due(session, limit, ids,
+            max_bytes=config.rss_ingest_retry_max_bytes, max_entry_bytes=config.rss_entry_max_bytes)
+    started = monotonic()
+    for index, item in enumerate(pending):
+        if index and monotonic() - started >= config.rss_ingest_retry_max_seconds:
+            break
         try:
+            if item["entry"] is None:
+                raise ValueError("EntryTooLarge")
             entry = json.loads(item["entry"], object_hook=feedparser.FeedParserDict)
             content = await Format().extract_content(entry, 0)
             content.update(id=item["id"], username=item["username"])
-            if await update_text(content, pending_version=item["version"]):
+            outcome = await write_content(content, pending_version=item["version"])
+            if outcome.success:
                 continue
             error = "DatabaseWriteError"
         except Exception as exc:
-            error = type(exc).__name__
+            error = "EntryTooLarge" if item["entry"] is None else type(exc).__name__
         async with get_session() as session, session.begin():
             await IngestQueueManager.failed(session, item, error)
         logger.warning(f"文章 {item['id']} 入库失败，保留补偿队列：{error}")

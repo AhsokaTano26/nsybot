@@ -1,5 +1,6 @@
 import asyncio
 import random
+from functools import wraps
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -26,6 +27,8 @@ from nsy.plugins.rssget.models import User
 
 from .encrypt import encrypt
 from .availability import FeedUnavailable, SourceHealthManager, is_twitter_account, utc_now
+from .state_machines import (SourceObservation, SourceOutcome, SourceRound, SourceRoundStatus,
+                             finish_source_round, source_round_transition)
 from .following_import import fetch_and_match
 from .functions import config, rss_get, fetch_feed, _parse_group_config, _delivery_lock
 from .format_json import Format
@@ -129,8 +132,18 @@ superuser_group_rule = Rule(is_group_event, ignore_group, is_superuser)
 
 PICKER_PAGE_SIZE = 25
 PICKER_SESSION_TTL = timedelta(minutes=30)
+PICKER_SESSION_LIMIT = 512
 # (群 OpenID、成员 OpenID、操作) -> (创建时间、当前页可操作的用户 ID)
 picker_sessions: dict[tuple[str, str, str], tuple[datetime, list[str]]] = {}
+
+
+def _prune_picker_sessions():
+    now = datetime.now()
+    for key, (created_at, _) in list(picker_sessions.items()):
+        if now - created_at > PICKER_SESSION_TTL:
+            picker_sessions.pop(key, None)
+    while len(picker_sessions) > PICKER_SESSION_LIMIT:
+        picker_sessions.pop(next(iter(picker_sessions)))
 
 
 def _split_args(command: str) -> list[str]:
@@ -150,6 +163,7 @@ def _picker_session_key(event: GroupMessageCreateEvent, operation: str) -> tuple
 
 def _get_picker_candidates(event: GroupMessageCreateEvent, operation: str) -> list[str] | None:
     """取得当前成员在当前群的选择面板，过期面板自动失效。"""
+    _prune_picker_sessions()
     key = _picker_session_key(event, operation)
     session = picker_sessions.get(key)
     if not session:
@@ -166,7 +180,9 @@ def _set_picker_candidates(
 ) -> None:
     key = _picker_session_key(event, operation)
     if candidates:
+        _prune_picker_sessions()
         picker_sessions[key] = (datetime.now(), candidates)
+        _prune_picker_sessions()
     else:
         picker_sessions.pop(key, None)
 
@@ -359,9 +375,13 @@ async def _send_rss_article(group_id: str, content: dict, translation: str | Non
 async def send_qq_image(img_url: str, group_id: str):
     """在命令回复中发送 QQ 官方富媒体图片。"""
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            data, file_name = await download_image(img_url, client)
-        await _send_rss_reply(group_id, file_image(data, file_name))
+        async with qq_utils.image_transfer_slot():
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                data, file_name = await download_image(img_url, client)
+            try:
+                await _send_rss_reply(group_id, file_image(data, file_name))
+            finally:
+                del data
 
     except httpx.HTTPError as e:
         logger.opt(exception=False).error(f"图片下载失败: {str(e)}")
@@ -376,8 +396,19 @@ async def send_qq_image(img_url: str, group_id: str):
 
 
 rss_cmd = on_command("rss", priority=10, block=True, rule=group_rule)
+_manual_rss_capacity = asyncio.Semaphore(1)
+
+
+def _bounded_rss_command(handler):
+    @wraps(handler)
+    async def bounded(*args, **kwargs):
+        # 从获取大响应到最后一次发送都占用时隙；排队命令只保留小型事件。
+        async with _manual_rss_capacity:
+            return await handler(*args, **kwargs)
+    return bounded
 
 @rss_cmd.handle()
+@_bounded_rss_command
 async def handle_rss_cmd(event: GroupMessageCreateEvent,args: Message = CommandArg()):
     logger.info(f"从官方群 {group_openid(event)} 发起 RSS_Hub 请求")
 
@@ -1101,6 +1132,7 @@ async def handle_unsub_by_index(event: GroupMessageCreateEvent, args: Message = 
 
 list_article = on_command("list", aliases={"文章列表"}, priority=10, rule=group_rule)
 @list_article.handle()
+@_bounded_rss_command
 async def handle_list_article(event: GroupMessageCreateEvent,args: Message = CommandArg()):
     """
     查询用户文章列表
@@ -1367,25 +1399,22 @@ async def collect_articles():
         if not accounts:
             logger.info("当前账户列表为空")
             return
-        twitter_paused = False
+        twitter_round = SourceRound()
         if any(is_twitter_account(platform, route) for _, _, route, platform in accounts):
             try:
                 async with get_session() as session:
                     retry_at = await SourceHealthManager.retry_at(session)
-                twitter_paused = retry_at is not None and retry_at > utc_now()
+                if retry_at is not None and retry_at > utc_now():
+                    twitter_round = SourceRound(SourceRoundStatus.PAUSED)
             except SQLAlchemyError as exc:
                 logger.warning(f"Twitter 退避状态读取失败，继续本轮采集：{type(exc).__name__}")
         attempted = 0
-        twitter_ok = False
-        twitter_failed = False
-        twitter_streak = 0
-        twitter_retry_after = 0
         for userid, username, route, platform_name in accounts:
             twitter = is_twitter_account(platform_name, route)
             if not route:
                 logger.warning(f"账号 {userid} 的平台配置不存在，跳过")
                 continue
-            if twitter and twitter_paused:
+            if twitter and twitter_round.paused:
                 continue
             if attempted:
                 await asyncio.sleep(random.uniform(5, 15))
@@ -1394,24 +1423,31 @@ async def collect_articles():
                 logger.info(f"开始采集账号 {userid} 的 RSS")
                 collected = await R.collect_rss(userid, account=(username, route, platform_name))
                 if twitter and collected:
-                    twitter_streak = 0
-                    if not twitter_ok:
+                    transition = source_round_transition(
+                        twitter_round, SourceOutcome.AVAILABLE,
+                        threshold=config.rss_twitter_failure_threshold, cooldown=config.rss_twitter_cooldown,
+                    )
+                    twitter_round = transition.state
+                    if transition.observation is SourceObservation.AVAILABLE:
                         await _observe_twitter(True)
-                    twitter_ok = True
             except FeedUnavailable as exc:
                 if twitter:
-                    twitter_failed |= exc.global_failure
-                    twitter_retry_after = max(twitter_retry_after, exc.retry_after)
-                    twitter_streak = twitter_streak + 1 if exc.global_failure else 0
-                    if exc.rate_limited or twitter_streak >= config.rss_twitter_failure_threshold:
-                        cooldown = max(config.rss_twitter_cooldown, twitter_retry_after)
-                        twitter_paused = True
-                        await _observe_twitter(False, cooldown=cooldown)
-                        logger.warning(f"Twitter 采集暂停，至少 {cooldown} 秒后在下一轮探测")
+                    outcome = SourceOutcome.RATE_LIMITED if exc.rate_limited else (
+                        SourceOutcome.UNAVAILABLE if exc.global_failure else SourceOutcome.ACCOUNT_FAILURE
+                    )
+                    transition = source_round_transition(
+                        twitter_round, outcome, retry_after=exc.retry_after,
+                        threshold=config.rss_twitter_failure_threshold, cooldown=config.rss_twitter_cooldown,
+                    )
+                    twitter_round = transition.state
+                    if transition.observation is SourceObservation.UNAVAILABLE:
+                        await _observe_twitter(False, cooldown=transition.cooldown)
+                        logger.warning(f"Twitter 采集暂停，至少 {transition.cooldown} 秒后在下一轮探测")
             except Exception as exc:
                 logger.opt(exception=False).error(f"采集账号 {userid} 失败，不影响其他账号：{exc}")
-        if twitter_failed and not twitter_ok and not twitter_paused:
-            await _observe_twitter(False, cooldown=max(config.rss_twitter_cooldown, twitter_retry_after))
+        transition = finish_source_round(twitter_round, cooldown=config.rss_twitter_cooldown)
+        if transition.observation is SourceObservation.UNAVAILABLE:
+            await _observe_twitter(False, cooldown=transition.cooldown)
         logger.info(f"本轮全账户 RSS 采集结束，共请求 {attempted}/{len(accounts)} 个账号")
 
 

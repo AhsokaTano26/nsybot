@@ -1,0 +1,73 @@
+{
+  "verified_date": "2026-11-21",
+  "status": "ship",
+  "target": "software documentation",
+  "font": "Songti SC (宋体-简), with SimSun / Noto Serif CJK SC fallback",
+  "checker": "figures:figure-qa / check_svg.py",
+  "findings": [],
+  "figures": [
+    {
+      "svg": "01-overview.svg",
+      "png": "01-overview.png",
+      "svg_sha256": "5e3b6914a2f3777f0aa313e118676680c35d38084d327be60246844666b9be74",
+      "png_sha256": "79fffd00778608370ec1f1ed83a16a8cd1137339ca8c4eea77850fce7062d1d9",
+      "labels_checked": 61,
+      "minimum_text_pt": 9.75,
+      "palette_findings": 0,
+      "geometry_findings": 0
+    },
+    {
+      "svg": "02-collection-state.svg",
+      "png": "02-collection-state.png",
+      "svg_sha256": "a42b4b83a778e596527dd0e799d72f7f0dbd9485759405c2819c0048cf208605",
+      "png_sha256": "6c74e0e1ce3d3d092b104679365132e87c5353a4d880bc45766d8f4ed68ae801",
+      "labels_checked": 43,
+      "minimum_text_pt": 9.75,
+      "palette_findings": 0,
+      "geometry_findings": 0
+    },
+    {
+      "svg": "03-ingest-transaction.svg",
+      "png": "03-ingest-transaction.png",
+      "svg_sha256": "ce83a4ac12b255bd6c018caa7a0b51a618a5e1dcef299c6643c7fbd06e547506",
+      "png_sha256": "08a659d000a14a9ae0a08c9fbd9c177ba9dd55b69c10a2d49e2c7e8c0d39a336",
+      "labels_checked": 45,
+      "minimum_text_pt": 9.75,
+      "palette_findings": 0,
+      "geometry_findings": 0
+    },
+    {
+      "svg": "04-qq-delivery.svg",
+      "png": "04-qq-delivery.png",
+      "svg_sha256": "fcfdaefbd1e98086eec2db2df114e4fb7e22921f8960a21e4f1fd72f5f777831",
+      "png_sha256": "d145db014625910fa2e8d8f694864cfb1f9694faec4e32e4669f85181abb4015",
+      "labels_checked": 53,
+      "minimum_text_pt": 9.75,
+      "palette_findings": 0,
+      "geometry_findings": 0
+    },
+    {
+      "svg": "05-image-sync.svg",
+      "png": "05-image-sync.png",
+      "svg_sha256": "0855dacda57f2eec76065bba989095f7789ac4ecc0e1cce56ec4f59f13af8a60",
+      "png_sha256": "2c39034b7d15c5382d4878a49f966a01e59fa0090bf2f047ed840fa3e9c0add4",
+      "labels_checked": 30,
+      "minimum_text_pt": 9.75,
+      "palette_findings": 0,
+      "geometry_findings": 0
+    },
+    {
+      "svg": "06-kuma-health.svg",
+      "png": "06-kuma-health.png",
+      "svg_sha256": "16606156a2300f71116d5832d0e4b803a1d8f63f913ebad7d0ebd809a23d7b82",
+      "png_sha256": "d284c9ad14d73756046fbe7e910b9e8ed817e2296e8f21fa9d6ae39ecac8067c",
+      "labels_checked": 50,
+      "minimum_text_pt": 9.75,
+      "palette_findings": 0,
+      "geometry_findings": 0
+    }
+  ],
+  "labels_checked": 282,
+  "minimum_text_pt": 9.75,
+  "visual_review": "All six final Songti PNGs inspected; no reported clipping or routing ambiguity; state and dataflow semantics cross-checked against source."
+}

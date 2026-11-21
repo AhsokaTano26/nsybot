@@ -30,6 +30,11 @@ class Config(BaseModel):
     rss_ingest_retry_interval: int = Field(default=60, gt=0, le=3600)
     rss_ingest_retry_batch: int = Field(default=100, gt=0, le=1000)
     rss_fetch_retry_base: float = Field(default=2, gt=0, le=30)
+    # 单 worker 预算：解压后的 RSS、单条处理、补偿批次均有界。
+    rss_feed_max_bytes: int = Field(default=4 * 1024 * 1024, gt=0, le=8 * 1024 * 1024)
+    rss_entry_max_bytes: int = Field(default=256 * 1024, gt=0, le=1024 * 1024)
+    rss_ingest_retry_max_bytes: int = Field(default=4 * 1024 * 1024, gt=0, le=8 * 1024 * 1024)
+    rss_ingest_retry_max_seconds: float = Field(default=1, gt=0, le=5)
     # 全部 RSSHub 失败时跨账号退避，防止连续请求扩大上游限流。
     rss_twitter_cooldown: int = Field(default=900, gt=0, le=86400)
     rss_twitter_failure_threshold: int = Field(default=3, gt=0, le=20)

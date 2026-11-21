@@ -5,7 +5,7 @@ from hashlib import sha256
 import json
 import math
 import random
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from weakref import WeakValueDictionary
 import feedparser
 import httpx
@@ -20,21 +20,25 @@ from .format_json import Format
 from .get_id import get_id
 from .models_method import DetailManager, PlantformManager, UserManager
 from .models import RSSFeedCache
+from .resource_limits import FeedResourceError, FeedSyntaxError, check_feed_structure, read_feed_body
+from .state_machines import DeliveryDecision, delivery_decision
 from .trans_msg import if_self_trans, if_trans
 from .update_text import cache_entries, get_text, update_text
-from nsy.qq_utils import article_messages, download_image, error, file_image, send_group_message
+from nsy.qq_utils import article_messages, download_image, error, file_image, image_transfer_slot, send_group_message
 
 config = get_plugin_config(Config)
 
 class NetworkManager:
     _client: httpx.AsyncClient = None
     _rss_backoffs = {}
+    # 至多两个有界响应；允许手动查询与采集并发观察限流，解析仍在单 worker 执行。
+    _rss_capacity = asyncio.Semaphore(2)
 
     @classmethod
     def get_client(cls) -> httpx.AsyncClient:
         if cls._client is None or cls._client.is_closed:
-            # 配置连接池：保持 20 个长连接，最多允许 50 个并发
-            limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
+            # 采集和发送共用小型连接池。
+            limits = httpx.Limits(max_connections=6, max_keepalive_connections=3)
             # 配置超时：连接 10s，读写 30s
             timeout = httpx.Timeout(30.0, connect=10.0)
             cls._client = httpx.AsyncClient(
@@ -107,6 +111,8 @@ async def fetch_feed(url: str) -> dict:
         retry_after = max(retry_after, result.get("retry_after", 0))
         failure = dict(result, error=result.get("error") or "Invalid RSS", rate_limited=rate_limited,
                        retry_after=retry_after)
+        if result.get("resource_limited"):
+            return failure
         # 不在采集锁内等待很长的上游冷却；同一实例上的后续账号也遵守它。
         if retry_after > 30:
             return _remember_rss_backoff(scope, retry_after, failure)
@@ -133,40 +139,63 @@ async def _fetch_feed_once(url: str) -> dict:
     """单次请求保留上游错误类别，供实例重试与全局状态判断使用。"""
     client = NetworkManager.get_client()
     try:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        parsed = feedparser.parse(resp.content)
-
-        if parsed.bozo:  # feedparser 内部解析错误
-            logger.warning(f"RSS 格式异常: {url}")
-
-        return parsed
+        async with NetworkManager._rss_capacity:
+            target = url
+            for _ in range(6):
+                # HTTPX 自动重定向会先无界读取中间响应；手动关闭正文再跳转。
+                async with client.stream("GET", target, headers={"Accept-Encoding": "gzip, deflate"},
+                                         follow_redirects=False) as resp:
+                    if resp.is_redirect and resp.headers.get("location"):
+                        target = urljoin(str(resp.url), resp.headers["location"])
+                        if urlsplit(target).scheme not in {"http", "https"}:
+                            raise FeedSyntaxError("InvalidFeedRedirect")
+                        continue
+                    if resp.is_error:
+                        try:
+                            reason = (await read_feed_body(resp, 16384, prefix=True)).decode("utf-8", errors="replace")
+                        except FeedResourceError:
+                            # 诊断正文不可信时仍必须尊重状态码及 Retry-After。
+                            reason = ""
+                        return _http_feed_failure(resp, reason, url)
+                    content = await read_feed_body(resp, config.rss_feed_max_bytes)
+                    check_feed_structure(content)
+                    parsed = feedparser.parse(content)
+                    if parsed.bozo:
+                        logger.warning(f"RSS 格式异常: {url}")
+                    return parsed
+            raise FeedSyntaxError("FeedRedirectLimit")
+    except FeedResourceError as exc:
+        logger.warning(f"RSS 超出处理预算或编码无效：{exc}")
+        return {"entries": [], "error": str(exc), "resource_limited": not isinstance(exc, FeedSyntaxError)}
     except httpx.HTTPStatusError as e:
-        response = e.response
-        logger.error(f"HTTP错误 {response.status_code}: {url}")
-        reason = response.text[:16384].casefold()
-        rate_limited = response.status_code == 429 or any(
-            term in reason for term in ("rate limit", "ratelimit", "too many requests", "too_many_requests")
-        )
-        retry_after = 0
-        value = response.headers.get("Retry-After", "")
-        try:
-            retry_after = int(value)
-        except ValueError:
-            try:
-                when = parsedate_to_datetime(value)
-                if when.tzinfo is None:
-                    when = when.replace(tzinfo=timezone.utc)
-                retry_after = int((when - datetime.now(timezone.utc)).total_seconds())
-            except (ValueError, TypeError, OverflowError):
-                pass
-        return {"entries": [], "error": "HTTP error", "status_code": response.status_code,
-                "rate_limited": rate_limited, "retry_after": max(0, min(retry_after, 86400))}
+        return _http_feed_failure(e.response, "", url)
     except httpx.RequestError as e:
         logger.error(f"网络请求异常: {type(e).__name__} on {url}")
     except Exception as e:
         logger.exception(f"解析非预期错误: {url}")
     return {"entries": [], "error": "Fetch failed"}
+
+
+def _http_feed_failure(response, reason, url):
+    logger.error(f"HTTP错误 {response.status_code}: {url}")
+    reason = reason.casefold()
+    rate_limited = response.status_code == 429 or any(
+        term in reason for term in ("rate limit", "ratelimit", "too many requests", "too_many_requests")
+    )
+    retry_after = 0
+    value = response.headers.get("Retry-After", "")
+    try:
+        retry_after = int(value)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            retry_after = int((when - datetime.now(timezone.utc)).total_seconds())
+        except (ValueError, TypeError, OverflowError):
+            pass
+    return {"entries": [], "error": "HTTP error", "status_code": response.status_code,
+            "rate_limited": rate_limited, "retry_after": max(0, min(retry_after, 86400))}
 
 
 class rss_get():
@@ -193,8 +222,12 @@ class rss_get():
         """附件最多尝试四次；失败告知用户，不让已发送的正文重复推送。"""
         for attempt in range(retry_count, 4):
             try:
-                data, file_name = await download_image(img_url, NetworkManager.get_client())
-                await send_group_message(get_bot(), group_id, file_image(data, file_name))
+                async with image_transfer_slot():
+                    data, file_name = await download_image(img_url, NetworkManager.get_client())
+                    try:
+                        await send_group_message(get_bot(), group_id, file_image(data, file_name))
+                    finally:
+                        del data
                 return True
             except Exception as exc:
                 if attempt < 3:
@@ -232,13 +265,11 @@ class rss_get():
         if_need_self_trans = gc["if_need_self_trans"]
         if_need_translate = gc["if_need_translate"]
 
-        if if_is_self_trans:
-            allowed = if_need_self_trans
-        elif if_is_trans:
-            allowed = if_need_user_trans
-        else:
-            allowed = True
-        if allowed:
+        decision = delivery_decision(
+            is_self_repost=if_is_self_trans, is_repost=if_is_trans,
+            allow_self_reposts=if_need_self_trans, allow_reposts=if_need_user_trans,
+        )
+        if decision is DeliveryDecision.SEND:
             translation = None
             if if_need_trans and if_need_translate:
                 translation = content.get("trans_text") or "（暂无翻译）"
@@ -290,7 +321,10 @@ class rss_get():
             rate_limited=any(item.get("rate_limited") or item.get("status_code") == 429 for item in failures),
             retry_after=max((item.get("retry_after", 0) for item in failures), default=0),
             # 明确的账号级错误优先，避免备用实例宕机导致连续失效账号误触发全局熔断。
-            global_failure=bool(failures) and all(item.get("status_code") not in (400, 404, 410) for item in failures),
+            global_failure=bool(failures) and all(
+                item.get("status_code") not in (400, 404, 410) and not item.get("resource_limited")
+                for item in failures
+            ),
         )
 
     async def handle_rss(self, userid: str, group_id_list: list, group_configs: dict = None):
@@ -366,10 +400,7 @@ class rss_get():
             entries_info = json.loads(snapshot.entries, object_hook=feedparser.FeedParserDict)
         groups = list(dict.fromkeys(map(str, group_id_list)))
         configs = group_configs or {}
-        flags = {
-            trueid: (await if_self_trans(username, entry), await if_trans(entry))
-            for entry, trueid in entries_info
-        }
+        flags = {}
         content_tasks = {}
 
         async def load_content(entry, trueid):
@@ -416,13 +447,18 @@ class rss_get():
                     # 一篇的全部正文页和原图共用群锁，其他文章不能插入其中。
                     async with _delivery_lock(f"rss-group:{group}"):
                         async with get_session() as session:
-                            if await DetailManager.get_existing_ids(session, [record_id, skipped_id]):
-                                continue
-                        is_self, is_forward = flags[trueid]
-                        allowed = gc["if_need_self_trans"] if is_self else (
-                            gc["if_need_trans"] if is_forward else True
+                            existing = await DetailManager.get_existing_ids(session, [record_id, skipped_id])
+                        if trueid not in flags and not existing:
+                            flags[trueid] = (await if_self_trans(username, entry), await if_trans(entry))
+                        is_self, is_forward = flags.get(trueid, (False, False))
+                        decision = delivery_decision(
+                            already_delivered=bool(existing),
+                            is_self_repost=is_self, is_repost=is_forward,
+                            allow_self_reposts=gc["if_need_self_trans"], allow_reposts=gc["if_need_trans"],
                         )
-                        if not allowed:
+                        if decision is DeliveryDecision.ALREADY_DELIVERED:
+                            continue
+                        if decision is DeliveryDecision.FILTERED:
                             async with get_session() as session:
                                 await DetailManager.create_signmsg(
                                     session, id=skipped_id, summary=entry.get("title"), updated=None,

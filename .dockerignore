@@ -1,5 +1,12 @@
 # ----- Project -----
 
+.git/
+.env
+.env.*
+!.env.example
+data/
+docs/superpowers/
+
 # .env.*
 .dockerignore
 Dockerfile

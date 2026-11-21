@@ -10,6 +10,14 @@ from pathlib import Path
 
 
 class DockerBootstrapTests(unittest.TestCase):
+    def test_gunicorn_stays_single_worker_even_with_host_concurrency_variables(self):
+        root = Path(__file__).resolve().parents[1]
+        env = dict(os.environ, WEB_CONCURRENCY='8', MAX_WORKERS='8', WORKERS_PER_CORE='4')
+        result = subprocess.run([sys.executable, '-c', (
+            "import runpy; c = runpy.run_path('docker/gunicorn_conf.py'); assert c['workers'] == 1"
+        )], cwd=root, env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_rss_loads_orm_without_another_plugin_preloading_it(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="nsybot-rss-bootstrap-") as directory:

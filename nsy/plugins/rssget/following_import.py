@@ -5,15 +5,12 @@ X (Twitter) Following List Import Module
 """
 
 from typing import Optional
+from importlib.util import find_spec
 
 from loguru import logger
 
-try:
-    from twikit import Client
-    TWIKIT_AVAILABLE = True
-except ImportError:
-    TWIKIT_AVAILABLE = False
-    logger.warning("twikit not installed, following import feature disabled")
+TWIKIT_AVAILABLE = find_spec("twikit") is not None
+Client = None
 
 
 class FollowingFetcher:
@@ -27,8 +24,14 @@ class FollowingFetcher:
             auth_token: X 的 auth_token cookie
             ct0: X 的 ct0 cookie
         """
-        if not TWIKIT_AVAILABLE:
-            raise RuntimeError("twikit library not installed")
+        global Client, TWIKIT_AVAILABLE
+        if Client is None:
+            try:
+                from twikit import Client
+            except ImportError as exc:
+                TWIKIT_AVAILABLE = False
+                raise RuntimeError("twikit library not installed") from exc
+            TWIKIT_AVAILABLE = True
 
         self.client = Client("en-US")
         self.client.set_cookies({"auth_token": auth_token, "ct0": ct0})
